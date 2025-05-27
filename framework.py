@@ -850,13 +850,20 @@ class CallCenterAnalysisPipeline:
         # 2h. Peak hours heatmap
         ax8 = fig.add_subplot(gs[2, 1:])
         hourly_dow = self.merged_df.groupby(['day_of_week', 'hour'])['ConnectionID'].count().reset_index()
-        hourly_dow_pivot = hourly_dow.pivot(index='hour', columns='day_of_week', values='ConnectionID')
-        hourly_dow_pivot.columns = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
-        sns.heatmap(hourly_dow_pivot, cmap='YlOrRd', ax=ax8, cbar_kws={'label': 'Call Count'})
-        ax8.set_title('Call Volume Heatmap by Hour and Day')
-        ax8.set_xlabel('Day of Week')
-        ax8.set_ylabel('Hour of Day')
-        
+        if len(hourly_dow) > 0:
+            hourly_dow_pivot = hourly_dow.pivot(index='hour', columns='day_of_week', values='ConnectionID')
+            # Map day numbers to names for available days only
+            day_map = {0: 'Mon', 1: 'Tue', 2: 'Wed', 3: 'Thu', 4: 'Fri', 5: 'Sat', 6: 'Sun'}
+            available_days = sorted(hourly_dow_pivot.columns)
+            hourly_dow_pivot.columns = [day_map.get(d, str(d)) for d in available_days]
+            
+            sns.heatmap(hourly_dow_pivot, cmap='YlOrRd', ax=ax8, cbar_kws={'label': 'Call Count'})
+            ax8.set_title('Call Volume Heatmap by Hour and Day')
+            ax8.set_xlabel('Day of Week')
+            ax8.set_ylabel('Hour of Day')
+        else:
+            ax8.text(0.5, 0.5, 'Insufficient data for heatmap', ha='center', va='center', transform=ax8.transAxes)
+            ax8.set_title('Call Volume Heatmap by Hour and Day')
         # 2i. Monthly trend
         ax9 = fig.add_subplot(gs[3, :])
         monthly_data = self.daily_summary.copy()

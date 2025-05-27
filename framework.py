@@ -793,14 +793,25 @@ class CallCenterAnalysisPipeline:
         ax4.set_ylabel('Frequency')
         
         # 2e. Transfer rate by day
+        # 2e. Transfer rate by day
         ax5 = fig.add_subplot(gs[1, 1])
-        transfer_by_day = self.daily_summary.groupby('day_name')['transfer_rate'].mean()
-        day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-        transfer_by_day = transfer_by_day.reindex([d for d in day_order if d in transfer_by_day.index])
-        ax5.bar(transfer_by_day.index, transfer_by_day.values, color='orange')
-        ax5.set_title('Average Transfer Rate by Day')
-        ax5.set_ylabel('Transfer Rate')
-        plt.setp(ax5.xaxis.get_majorticklabels(), rotation=45)
+        if len(self.daily_summary) > 0 and 'transfer_rate' in self.daily_summary.columns:
+            transfer_by_day = self.daily_summary.groupby('day_name')['transfer_rate'].mean()
+            day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+            # Only include days that exist in the data
+            available_days = [d for d in day_order if d in transfer_by_day.index]
+            if len(available_days) > 0:
+                transfer_by_day = transfer_by_day.reindex(available_days)
+                ax5.bar(transfer_by_day.index, transfer_by_day.values, color='orange')
+                ax5.set_title('Average Transfer Rate by Day')
+                ax5.set_ylabel('Transfer Rate')
+                plt.setp(ax5.xaxis.get_majorticklabels(), rotation=45)
+            else:
+                ax5.text(0.5, 0.5, 'No transfer data available', ha='center', va='center', transform=ax5.transAxes)
+                ax5.set_title('Average Transfer Rate by Day')
+        else:
+            ax5.text(0.5, 0.5, 'No data available', ha='center', va='center', transform=ax5.transAxes)
+            ax5.set_title('Average Transfer Rate by Day')
         
         # 2f. Complexity score distribution
         ax6 = fig.add_subplot(gs[1, 2])
@@ -809,7 +820,7 @@ class CallCenterAnalysisPipeline:
         ax6.set_title('Call Complexity Distribution')
         ax6.set_xlabel('Complexity Score')
         ax6.set_ylabel('Frequency')
-        
+
         # 2g. Weekend vs Weekday comparison
         ax7 = fig.add_subplot(gs[2, 0])
         weekend_comparison = self.daily_summary.groupby('is_weekend').agg({
@@ -817,11 +828,24 @@ class CallCenterAnalysisPipeline:
             'avg_duration': 'mean',
             'transfer_rate': 'mean'
         })
-        weekend_comparison.index = ['Weekday', 'Weekend']
-        weekend_comparison[['total_calls']].plot(kind='bar', ax=ax7, color='teal')
-        ax7.set_title('Average Daily Calls: Weekday vs Weekend')
-        ax7.set_ylabel('Average Calls')
-        ax7.set_xticklabels(ax7.get_xticklabels(), rotation=0)
+        # Only set index if we have data
+        if len(weekend_comparison) > 0:
+            if len(weekend_comparison) == 2:
+                weekend_comparison.index = ['Weekday', 'Weekend']
+            elif len(weekend_comparison) == 1:
+                # Handle case where we only have weekday or weekend data
+                if weekend_comparison.index[0] == 0:
+                    weekend_comparison.index = ['Weekday']
+                else:
+                    weekend_comparison.index = ['Weekend']
+            
+            weekend_comparison[['total_calls']].plot(kind='bar', ax=ax7, color='teal')
+            ax7.set_title('Average Daily Calls: Weekday vs Weekend')
+            ax7.set_ylabel('Average Calls')
+            ax7.set_xticklabels(ax7.get_xticklabels(), rotation=0)
+        else:
+            ax7.text(0.5, 0.5, 'No data available', ha='center', va='center', transform=ax7.transAxes)
+            ax7.set_title('Average Daily Calls: Weekday vs Weekend')
         
         # 2h. Peak hours heatmap
         ax8 = fig.add_subplot(gs[2, 1:])

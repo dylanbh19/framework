@@ -1,6 +1,6 @@
 """
-Call Center Volume Prediction - Complete Solution
-=================================================
+Call Center Volume Prediction - Complete Solution (Corrected for Your Data)
+===========================================================================
 
 This comprehensive solution prepares call center data for volume prediction modeling
 based on customer mailing campaigns. It includes data cleaning, feature engineering,
@@ -91,9 +91,15 @@ class CallCenterAnalysisPipeline:
         else:
             # Load from files
             if self.genesys_path:
-                self.genesys_df = pd.read_excel(self.genesys_path)
+                if self.genesys_path.endswith('.xlsx'):
+                    self.genesys_df = pd.read_excel(self.genesys_path)
+                else:
+                    self.genesys_df = pd.read_csv(self.genesys_path)
             if self.contact_path:
-                self.contact_df = pd.read_excel(self.contact_path)
+                if self.contact_path.endswith('.xlsx'):
+                    self.contact_df = pd.read_excel(self.contact_path)
+                else:
+                    self.contact_df = pd.read_csv(self.contact_path)
         
         # Log initial data stats
         self.transformation_log.append({
@@ -120,24 +126,39 @@ class CallCenterAnalysisPipeline:
         
         # Clean Genesys data
         print("\nCleaning Genesys data...")
-        self.genesys_df['ConnectionID'] = self.genesys_df['ConnectionID'].astype(str).str.strip()
         
-        # Handle timestamps
-        timestamp_cols = ['timestamp', 'StartTime', 'EndTime']
+        # Handle ConnectionID - it's a float in your data, convert to string
+        if 'ConnectionID' in self.genesys_df.columns:
+            self.genesys_df['ConnectionID'] = self.genesys_df['ConnectionID'].astype(str).str.replace('.0', '', regex=False).str.strip()
+        
+        # Handle timestamps based on your actual columns
+        timestamp_cols = ['ConversationStart']
         for col in timestamp_cols:
             if col in self.genesys_df.columns:
                 self.genesys_df[col] = pd.to_datetime(self.genesys_df[col], errors='coerce')
+                print(f"  ✓ Converted {col} to datetime")
         
         # Clean Contact data
-        print("Cleaning Contact data...")
-        self.contact_df['ReferenceNo'] = self.contact_df['ReferenceNo'].astype(str).str.strip()
+        print("\nCleaning Contact data...")
+        
+        # Handle ReferenceNo - ensure it matches ConnectionID format
+        if 'ReferenceNo' in self.contact_df.columns:
+            self.contact_df['ReferenceNo'] = self.contact_df['ReferenceNo'].astype(str).str.strip()
         
         # Standardize activity names
-        self.contact_df['ActivityName'] = self.contact_df['ActivityName'].str.strip().str.title()
+        if 'ActivityName' in self.contact_df.columns:
+            self.contact_df['ActivityName'] = self.contact_df['ActivityName'].str.strip().str.title()
         
         # Handle duration data
         if 'ActivityDuration' in self.contact_df.columns:
             self.contact_df['ActivityDuration'] = pd.to_numeric(self.contact_df['ActivityDuration'], errors='coerce').fillna(0)
+        
+        # Handle datetime columns in contact data
+        contact_timestamp_cols = ['DateTimeCompleted', 'DateTimeRecieved']
+        for col in contact_timestamp_cols:
+            if col in self.contact_df.columns:
+                self.contact_df[col] = pd.to_datetime(self.contact_df[col], errors='coerce')
+                print(f"  ✓ Converted {col} to datetime")
         
         self.transformation_log.append({
             'step': 'Data Cleaning',
@@ -145,7 +166,7 @@ class CallCenterAnalysisPipeline:
             'details': {
                 'actions': [
                     'Standardized ConnectionID and ReferenceNo formats',
-                    'Converted timestamp columns to datetime',
+                    'Converted ConversationStart to datetime',
                     'Cleaned activity names',
                     'Handled missing duration values'
                 ]
@@ -167,7 +188,7 @@ class CallCenterAnalysisPipeline:
             'ActivityName': [
                 'count',
                 'nunique',
-                lambda x: '|'.join(x),
+                lambda x: '|'.join(x.astype(str)),
                 lambda x: x.iloc[0] if len(x) > 0 else 'Unknown',
                 lambda x: x.iloc[-1] if len(x) > 0 else 'Unknown',
                 lambda x: x.mode().iloc[0] if len(x.mode()) > 0 else 'Unknown'
@@ -302,9 +323,19 @@ class CallCenterAnalysisPipeline:
         
         df = self.merged_df
         
-        # Use timestamp column - adjust based on your actual column name
-        timestamp_col = 'timestamp' if 'timestamp' in df.columns else 'StartTime'
-        df['timestamp'] = pd.to_datetime(df[timestamp_col])
+        # Use ConversationStart as the timestamp column
+        timestamp_col = 'ConversationStart'
+        if timestamp_col not in df.columns:
+            print(f"Error: {timestamp_col} not found in columns: {df.columns.tolist()[:10]}...")
+            raise ValueError(f"Column '{timestamp_col}' not found in the data")
+        
+        # Create main timestamp column
+        df['timestamp'] = pd.to_datetime(df[timestamp_col], errors='coerce')
+        
+        # Check for any parsing issues
+        null_timestamps = df['timestamp'].isna().sum()
+        if null_timestamps > 0:
+            print(f"Warning: {null_timestamps} timestamps could not be parsed")
         
         # Basic temporal features
         print("Creating basic temporal features...")
@@ -316,7 +347,7 @@ class CallCenterAnalysisPipeline:
         df['minute'] = df['timestamp'].dt.minute
         df['day_of_week'] = df['timestamp'].dt.dayofweek
         df['day_name'] = df['timestamp'].dt.day_name()
-        df['week_of_year'] = df['timestamp'].dt.isocalendar().week
+        df['week_of_year'] = df['timestamp'].dt.isocalendar().week.astype(int)
         df['quarter'] = df['timestamp'].dt.quarter
         df['day_of_year'] = df['timestamp'].dt.dayofyear
         
@@ -328,9 +359,9 @@ class CallCenterAnalysisPipeline:
         df['is_friday_weekend'] = df['day_of_week'].isin([4, 5, 6]).astype(int)
         
         # Holiday features
-        df['is_holiday'] = df['date'].apply(lambda x: x in self.holidays).astype(int)
-        df['days_to_holiday'] = df['date'].apply(self._days_to_next_holiday)
-        df['days_from_holiday'] = df['date'].apply(self._days_from_last_holiday)
+        df['is_holiday'] = df['date'].apply(lambda x: x in self.holidays if pd.notna(x) else False).astype(int)
+        df['days_to_holiday'] = df['date'].apply(lambda x: self._days_to_next_holiday(x) if pd.notna(x) else 30)
+        df['days_from_holiday'] = df['date'].apply(lambda x: self._days_from_last_holiday(x) if pd.notna(x) else 30)
         df['is_near_holiday'] = ((df['days_to_holiday'] <= 2) | (df['days_from_holiday'] <= 1)).astype(int)
         
         # Business hours
@@ -366,7 +397,7 @@ class CallCenterAnalysisPipeline:
         # Payday effects (assuming bi-weekly on 15th and last day)
         df['is_payday'] = ((df['day'] == 15) | (df['is_month_end'] == 1)).astype(int)
         df['days_from_payday'] = df['day'].apply(
-            lambda x: min(abs(x - 15), abs(x - 30)) if x < 15 else abs(x - 15)
+            lambda x: min(abs(x - 15), abs(x - 30)) if x < 15 else abs(x - 15) if pd.notna(x) else 15
         )
         
         self.feature_definitions['Temporal Features'] = {
@@ -387,6 +418,8 @@ class CallCenterAnalysisPipeline:
         
     def _days_to_next_holiday(self, date):
         """Calculate days to next holiday"""
+        if pd.isna(date):
+            return 30
         for i in range(1, 30):
             if date + timedelta(days=i) in self.holidays:
                 return i
@@ -394,6 +427,8 @@ class CallCenterAnalysisPipeline:
     
     def _days_from_last_holiday(self, date):
         """Calculate days from last holiday"""
+        if pd.isna(date):
+            return 30
         for i in range(1, 30):
             if date - timedelta(days=i) in self.holidays:
                 return i
@@ -409,18 +444,28 @@ class CallCenterAnalysisPipeline:
         
         df = self.merged_df
         
-        # Count current unknown intents
-        unknown_before = (df['uui_Intent'] == 'unknown').sum() if 'uui_Intent' in df.columns else 0
-        print(f"Unknown intents before augmentation: {unknown_before}")
+        # Check if uui_Intent column exists
+        intent_col = None
+        for col in df.columns:
+            if 'intent' in col.lower():
+                intent_col = col
+                break
+        
+        if intent_col:
+            print(f"Found intent column: {intent_col}")
+            unknown_before = (df[intent_col].str.lower() == 'unknown').sum()
+        else:
+            print("No intent column found, will create based on activities")
+            unknown_before = len(df)
         
         # Intent inference rules based on activity patterns
         intent_rules = {
-            'billing': ['Payment', 'Billing', 'Invoice', 'Charge', 'Fee'],
-            'account': ['Account', 'Profile', 'Update', 'Information', 'Details'],
-            'technical': ['Technical', 'Support', 'Issue', 'Problem', 'Error'],
-            'service': ['Service', 'Enquiry', 'Question', 'General'],
+            'billing': ['Payment', 'Billing', 'Invoice', 'Charge', 'Fee', 'PaymentReplace', 'PaymentEnquiry'],
+            'account': ['Account', 'Profile', 'Update', 'Information', 'Details', 'AccountEnquiry', 'HolderSearch'],
+            'technical': ['Technical', 'Support', 'Issue', 'Problem', 'Error', 'StatusEnquiry'],
+            'service': ['Service', 'Enquiry', 'Question', 'General', 'GeneralInquiry'],
             'complaint': ['Complaint', 'Escalation', 'Dissatisfied', 'Manager'],
-            'international': ['International', 'Overseas', 'Foreign'],
+            'international': ['International', 'Overseas', 'Foreign', 'CheckRepl'],
             'cancellation': ['Cancel', 'Close', 'Terminate'],
             'new_service': ['New', 'Add', 'Upgrade', 'Additional']
         }
@@ -428,12 +473,12 @@ class CallCenterAnalysisPipeline:
         # Function to infer intent
         def infer_intent(row):
             # Check if we already have a valid intent
-            if pd.notna(row.get('uui_Intent')) and row.get('uui_Intent') != 'unknown':
-                return row['uui_Intent'], 1.0
+            if intent_col and pd.notna(row.get(intent_col)) and str(row.get(intent_col)).lower() != 'unknown':
+                return row[intent_col], 1.0
             
             # Try to infer from activity sequence
             if pd.notna(row.get('activity_sequence')):
-                activities = row['activity_sequence'].lower()
+                activities = str(row['activity_sequence']).lower()
                 
                 # Check each intent rule
                 best_match = None
@@ -451,7 +496,7 @@ class CallCenterAnalysisPipeline:
             
             # Check first activity
             if pd.notna(row.get('first_activity')):
-                first_act = row['first_activity'].lower()
+                first_act = str(row['first_activity']).lower()
                 for intent, keywords in intent_rules.items():
                     if any(keyword.lower() in first_act for keyword in keywords):
                         return intent, 0.5
@@ -459,15 +504,9 @@ class CallCenterAnalysisPipeline:
             return 'unknown', 0.0
         
         # Apply inference
-        if 'uui_Intent' in df.columns:
-            df[['intent_augmented', 'intent_confidence']] = df.apply(
-                lambda row: pd.Series(infer_intent(row)), axis=1
-            )
-        else:
-            # If no intent column exists, create one based on activities
-            df[['intent_augmented', 'intent_confidence']] = df.apply(
-                lambda row: pd.Series(infer_intent(row)), axis=1
-            )
+        df[['intent_augmented', 'intent_confidence']] = df.apply(
+            lambda row: pd.Series(infer_intent(row)), axis=1
+        )
         
         # Create intent categories
         df['intent_category'] = df['intent_augmented'].map({
@@ -486,7 +525,8 @@ class CallCenterAnalysisPipeline:
         # Count unknown intents after augmentation
         unknown_after = (df['intent_augmented'] == 'unknown').sum()
         print(f"Unknown intents after augmentation: {unknown_after}")
-        print(f"✓ Reduced unknown intents by {unknown_before - unknown_after} ({(unknown_before - unknown_after) / unknown_before * 100:.1f}%)")
+        if unknown_before > 0:
+            print(f"✓ Reduced unknown intents by {unknown_before - unknown_after} ({(unknown_before - unknown_after) / unknown_before * 100:.1f}%)")
         
         self.merged_df = df
         
@@ -514,7 +554,7 @@ class CallCenterAnalysisPipeline:
             0
         )
         
-        # Outcome indicators
+        # Outcome indicators based on your actual columns
         df['is_abandoned'] = df.get('Abandoned', 0).fillna(0).astype(int)
         df['has_callback'] = df.get('CallbackDNIS', '').notna().astype(int)
         df['had_wait_time'] = (df.get('WaitTime', 0).fillna(0) > 0).astype(int)
@@ -532,8 +572,8 @@ class CallCenterAnalysisPipeline:
         
         # Resolution indicators
         df['likely_resolved'] = (
-            (df['ends_with_resolution'] == 1) | 
-            (df['is_simple_call'] == 1) |
+            (df.get('ends_with_resolution', 0) == 1) | 
+            (df.get('is_simple_call', 0) == 1) |
             ((df['activity_count'] <= 3) & (df['total_duration'] < 300))
         ).astype(int)
         
@@ -550,6 +590,9 @@ class CallCenterAnalysisPipeline:
         print("=" * 80)
         
         df = self.merged_df
+        
+        # Filter out any rows with null timestamps
+        df = df[df['timestamp'].notna()]
         
         # Hourly aggregation
         print("Creating hourly aggregation...")
@@ -578,9 +621,12 @@ class CallCenterAnalysisPipeline:
         ]
         
         # Add derived metrics
-        hourly_agg['transfer_rate'] = hourly_agg['transfers'] / hourly_agg['call_volume']
-        hourly_agg['abandon_rate'] = hourly_agg['abandons'] / hourly_agg['call_volume']
-        hourly_agg['wait_rate'] = hourly_agg['calls_with_wait'] / hourly_agg['call_volume']
+        hourly_agg['transfer_rate'] = np.where(hourly_agg['call_volume'] > 0, 
+                                               hourly_agg['transfers'] / hourly_agg['call_volume'], 0)
+        hourly_agg['abandon_rate'] = np.where(hourly_agg['call_volume'] > 0,
+                                              hourly_agg['abandons'] / hourly_agg['call_volume'], 0)
+        hourly_agg['wait_rate'] = np.where(hourly_agg['call_volume'] > 0,
+                                           hourly_agg['calls_with_wait'] / hourly_agg['call_volume'], 0)
         
         self.hourly_summary = hourly_agg
         
@@ -613,9 +659,12 @@ class CallCenterAnalysisPipeline:
         ]
         
         # Add derived metrics
-        daily_agg['transfer_rate'] = daily_agg['total_transfers'] / daily_agg['total_calls']
-        daily_agg['abandon_rate'] = daily_agg['total_abandons'] / daily_agg['total_calls']
-        daily_agg['multi_touch_rate'] = daily_agg['multi_touch_calls'] / daily_agg['total_calls']
+        daily_agg['transfer_rate'] = np.where(daily_agg['total_calls'] > 0,
+                                             daily_agg['total_transfers'] / daily_agg['total_calls'], 0)
+        daily_agg['abandon_rate'] = np.where(daily_agg['total_calls'] > 0,
+                                            daily_agg['total_abandons'] / daily_agg['total_calls'], 0)
+        daily_agg['multi_touch_rate'] = np.where(daily_agg['total_calls'] > 0,
+                                                 daily_agg['multi_touch_calls'] / daily_agg['total_calls'], 0)
         
         # Extract top intents
         daily_agg['top_intent'] = daily_agg['intent_distribution'].apply(
@@ -737,7 +786,8 @@ class CallCenterAnalysisPipeline:
         # 2d. Call duration distribution
         ax4 = fig.add_subplot(gs[1, 0])
         duration_data = self.merged_df['total_duration'].dropna()
-        ax4.hist(duration_data[duration_data < 1800], bins=50, color='lightgreen', edgecolor='black')
+        duration_data_filtered = duration_data[duration_data < 1800]
+        ax4.hist(duration_data_filtered, bins=50, color='lightgreen', edgecolor='black')
         ax4.set_title('Call Duration Distribution (< 30 min)')
         ax4.set_xlabel('Duration (seconds)')
         ax4.set_ylabel('Frequency')
@@ -746,7 +796,7 @@ class CallCenterAnalysisPipeline:
         ax5 = fig.add_subplot(gs[1, 1])
         transfer_by_day = self.daily_summary.groupby('day_name')['transfer_rate'].mean()
         day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-        transfer_by_day = transfer_by_day.reindex(day_order)
+        transfer_by_day = transfer_by_day.reindex([d for d in day_order if d in transfer_by_day.index])
         ax5.bar(transfer_by_day.index, transfer_by_day.values, color='orange')
         ax5.set_title('Average Transfer Rate by Day')
         ax5.set_ylabel('Transfer Rate')
@@ -785,14 +835,18 @@ class CallCenterAnalysisPipeline:
         
         # 2i. Monthly trend
         ax9 = fig.add_subplot(gs[3, :])
-        monthly_data = self.daily_summary.groupby([pd.to_datetime(self.daily_summary['date']).dt.to_period('M'), 'call_centre']).agg({
+        monthly_data = self.daily_summary.copy()
+        monthly_data['month_year'] = pd.to_datetime(monthly_data['date']).dt.to_period('M')
+        monthly_agg = monthly_data.groupby(['month_year', 'call_centre']).agg({
             'total_calls': 'sum'
         }).reset_index()
-        monthly_data['date'] = monthly_data['date'].astype(str)
+        monthly_agg['month_year'] = monthly_agg['month_year'].astype(str)
         
         for centre in self.daily_summary['call_centre'].unique():
-            centre_monthly = monthly_data[monthly_data['call_centre'] == centre]
-            ax9.plot(centre_monthly['date'], centre_monthly['total_calls'], marker='o', label=centre, linewidth=2)
+            centre_monthly = monthly_agg[monthly_agg['call_centre'] == centre]
+            if len(centre_monthly) > 0:
+                ax9.plot(centre_monthly['month_year'], centre_monthly['total_calls'], 
+                        marker='o', label=centre, linewidth=2)
         
         ax9.set_title('Monthly Call Volume Trend by Call Center', fontsize=14, fontweight='bold')
         ax9.set_xlabel('Month')
@@ -818,6 +872,10 @@ class CallCenterAnalysisPipeline:
         
         # Prepare modeling data
         df = self.modeling_data.dropna(subset=['calls_lag_1d', 'calls_lag_7d'])
+        
+        if len(df) < 10:
+            print("Not enough data for modeling after removing missing values")
+            return None
         
         # Select features for modeling
         feature_cols = [
@@ -847,6 +905,10 @@ class CallCenterAnalysisPipeline:
         print(f"Training set: {len(X_train)} samples")
         print(f"Test set: {len(X_test)} samples")
         
+        if len(X_train) < 10 or len(X_test) < 5:
+            print("Not enough data for reliable modeling")
+            return None
+        
         # Train Random Forest model
         print("\nTraining Random Forest model...")
         rf_model = RandomForestRegressor(n_estimators=100, random_state=42, n_jobs=-1)
@@ -873,7 +935,8 @@ class CallCenterAnalysisPipeline:
         
         # Plot feature importance
         plt.figure(figsize=(10, 8))
-        plt.barh(feature_importance['feature'][:15], feature_importance['importance'][:15])
+        top_features = feature_importance.head(15)
+        plt.barh(top_features['feature'], top_features['importance'])
         plt.xlabel('Importance')
         plt.title('Top 15 Feature Importances for Call Volume Prediction')
         plt.tight_layout()
@@ -933,6 +996,14 @@ class CallCenterAnalysisPipeline:
         print("GENERATING BUSINESS REPORT")
         print("=" * 80)
         
+        # Calculate statistics safely
+        avg_daily_calls = self.daily_summary['total_calls'].mean() if len(self.daily_summary) > 0 else 0
+        peak_day = self.daily_summary.groupby('day_name')['total_calls'].mean().idxmax() if len(self.daily_summary) > 0 else 'Unknown'
+        
+        weekend_calls = self.daily_summary[self.daily_summary['is_weekend']==1]['total_calls'].mean() if len(self.daily_summary[self.daily_summary['is_weekend']==1]) > 0 else 0
+        weekday_calls = self.daily_summary[self.daily_summary['is_weekend']==0]['total_calls'].mean() if len(self.daily_summary[self.daily_summary['is_weekend']==0]) > 0 else 1
+        weekend_diff = (1 - weekend_calls / weekday_calls) * 100 if weekday_calls > 0 else 0
+        
         report = f"""
 CALL CENTER DATA ANALYSIS REPORT
 Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}
@@ -954,9 +1025,9 @@ DATA OVERVIEW
 KEY FINDINGS
 ------------
 1. Call Volume Patterns:
-   • Average daily call volume: {self.daily_summary['total_calls'].mean():.0f} calls
-   • Peak day: {self.daily_summary.groupby('day_name')['total_calls'].mean().idxmax()}
-   • Weekend volume is {(1 - self.daily_summary[self.daily_summary['is_weekend']==1]['total_calls'].mean() / self.daily_summary[self.daily_summary['is_weekend']==0]['total_calls'].mean()) * 100:.1f}% lower than weekdays
+   • Average daily call volume: {avg_daily_calls:.0f} calls
+   • Peak day: {peak_day}
+   • Weekend volume is {weekend_diff:.1f}% lower than weekdays
 
 2. Call Characteristics:
    • Average call duration: {self.merged_df['total_duration'].mean()/60:.1f} minutes
@@ -965,7 +1036,7 @@ KEY FINDINGS
 
 3. Operational Insights:
    • Peak hours: 9-11 AM and 2-4 PM
-   • Highest complexity calls: {self.merged_df.groupby('intent_category')['complexity_weighted'].mean().idxmax()}
+   • Highest complexity calls: {self.merged_df.groupby('intent_category')['complexity_weighted'].mean().idxmax() if self.merged_df.groupby('intent_category')['complexity_weighted'].mean().any() else 'Unknown'}
    • Average activities per call: {self.merged_df['activity_count'].mean():.1f}
 
 DATA TRANSFORMATIONS COMPLETED
@@ -975,7 +1046,7 @@ DATA TRANSFORMATIONS COMPLETED
    • Created unified view of each customer interaction
 
 2. Intent Augmentation:
-   • Reduced unknown intents from 60% to {(self.merged_df['intent_augmented']=='unknown').sum()/len(self.merged_df)*100:.1f}%
+   • Reduced unknown intents using activity pattern analysis
    • Used activity patterns to infer likely intent
    • Added confidence scores for intent quality
 
@@ -1097,7 +1168,7 @@ README_CONTENT = """
 This document explains the data transformations performed to prepare call center data for volume prediction modeling based on customer mailing campaigns.
 
 ## Data Sources
-1. **Genesys/IVR Data**: Contains call metadata including timestamps, connection IDs, and partial intent information
+1. **Genesys/IVR Data**: Contains call metadata including timestamps (ConversationStart), connection IDs, and partial intent information
 2. **Contact Platform Data**: Detailed activity logs for each call showing all actions taken by agents
 
 ## Key Transformations
@@ -1113,7 +1184,7 @@ This document explains the data transformations performed to prepare call center
 - **Method**: 
   - Analyzed activity sequences (e.g., "Payment" activities → billing intent)
   - Added confidence scores to indicate reliability of inferred intents
-- **Result**: Reduced unknown intents to ~15-20%
+- **Result**: Reduced unknown intents significantly
 
 ### 3. Feature Creation
 

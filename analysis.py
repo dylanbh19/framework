@@ -1,14 +1,4 @@
-# ╔══════════════════════════════════════════════════════════════╗
-# ║  augmentation_analysis.py                                   ║
-# ║  Explore & plot results of intent-augmentation comparison   ║
-# ╚══════════════════════════════════════════════════════════════╝
-"""
-Run from the command-line **after** intent_augmentation_comparison has
-finished:
-
-    python augmentation_analysis.py
-"""
-
+# augmentation_analysis.py  (fixed column-name case)
 import argparse
 from pathlib import Path
 
@@ -17,61 +7,63 @@ import pandas as pd
 import seaborn as sns
 from tqdm.auto import tqdm
 
-# ── CLI ─────────────────────────────────────────────────────────
-ap = argparse.ArgumentParser("Explore augmentation results")
+# ── CLI ──────────────────────────────────────────────────────────
+ap = argparse.ArgumentParser()
 ap.add_argument("--outdir", default="augmentation_results",
                 help="folder that contains method_comparison.csv")
 ap.add_argument("--top", type=int, default=15,
-                help="how many top intents to plot per method")
+                help="top-N intents to plot for each method")
 args = ap.parse_args()
 
 OUT = Path(args.outdir).resolve()
+summary_path = OUT / "method_comparison.csv"
+best_path    = OUT / "best_augmented_data.csv"
 
-comp_path  = OUT / "method_comparison.csv"
-best_path  = OUT / "best_augmented_data.csv"
-
-if not comp_path.exists() or not best_path.exists():
-    raise SystemExit(f"❌  Expected {comp_path} and {best_path} – "
-                     "check --outdir value.")
+if not summary_path.exists() or not best_path.exists():
+    raise SystemExit("❌  Could not find method_comparison.csv or best_augmented_data.csv; "
+                     "check --outdir path.")
 
 print(f"📂  Using results in: {OUT}")
 
-# ── load summary & best dataset ────────────────────────────────
-summary = pd.read_csv(comp_path)
+# ── load & tidy summary ─────────────────────────────────────────
+summary = pd.read_csv(summary_path)
+summary.columns = [c.lower() for c in summary.columns]   # <<< NEW
+if "method" not in summary.columns:
+    # fall back to original Capitalised spelling
+    summary = summary.rename(columns={"Method": "method"})
+
 best_df = pd.read_csv(best_path)
 
-# detect which per-method columns exist
 intent_cols = [c for c in best_df.columns if c.startswith("intent_")]
-print(f"🛈  Detected intent columns: {intent_cols}")
+print(f"🛈  detected intent columns: {intent_cols}")
 
-# ── PLOT 1 : Unknown-rate bar ──────────────────────────────────
+# ── Plot 1: Unknown-rate % ──────────────────────────────────────
 plt.figure(figsize=(8,4))
-sns.barplot(data=summary, x="method", y=summary["unknown_rate"]*100, color="#d95c5c")
+sns.barplot(data=summary, x="method", y=summary["unknown_rate"]*100,
+            color="#d95c5c")
 plt.ylabel("Unknown (%)")
 plt.title("Unknown rate by method")
 plt.xticks(rotation=45, ha="right")
 plt.tight_layout()
-png1 = OUT / "plots" / "analysis_unknown_rates.png"
-plt.savefig(png1, dpi=300)
+(OUT/"plots").mkdir(exist_ok=True, parents=True)
+plt.savefig(OUT/"plots"/"analysis_unknown_rates.png", dpi=300)
 plt.show()
 
-# ── PLOT 2 : Improved count bar ───────────────────────────────
+# ── Plot 2: Improved count ─────────────────────────────────────
 if "improved" in summary.columns:
     plt.figure(figsize=(8,4))
     sns.barplot(data=summary, x="method", y="improved", color="#5c9ad9")
-    plt.ylabel("Records fixed")
-    plt.title("Improved-from-baseline by method")
+    plt.ylabel("Improved records")
+    plt.title("Improved-from-baseline")
     plt.xticks(rotation=45, ha="right")
     plt.tight_layout()
-    png2 = OUT / "plots" / "analysis_improved.png"
-    plt.savefig(png2, dpi=300)
+    plt.savefig(OUT/"plots"/"analysis_improved.png", dpi=300)
     plt.show()
 
-# ── PLOT 3 : Top-N intents per method ─────────────────────────
+# ── Plot 3: Top-N intents per method ───────────────────────────
 top_n = args.top
-n_methods = len(intent_cols)
-fig, axes = plt.subplots(
-    n_methods, 1, figsize=(10, 3*n_methods), sharex=False)
+rows = len(intent_cols)
+fig, axes = plt.subplots(rows, 1, figsize=(10, 3*rows), sharex=False)
 
 for ax, col in zip(axes, intent_cols):
     vc = best_df[col].value_counts().head(top_n)
@@ -81,24 +73,18 @@ for ax, col in zip(axes, intent_cols):
     ax.set_ylabel("")
 
 plt.tight_layout()
-png3 = OUT / "plots" / "analysis_top_intents.png"
-plt.savefig(png3, dpi=300)
+plt.savefig(OUT/"plots"/"analysis_top_intents.png", dpi=300)
 plt.show()
 
-# ── VIEW SAMPLE ROWS ───────────────────────────────────────────
+# ── Preview first 50 rows ──────────────────────────────────────
 sample_cols = ["intent_baseline"] + intent_cols
 if "intent_augmented" in best_df.columns:
     sample_cols.append("intent_augmented")
 
-print("\n🖥️  Showing first 50 rows (baseline vs each method):")
-display_df = best_df[sample_cols].head(50)
-print(display_df.to_string())
+print("\n🖥️  First 50 rows (baseline vs methods)\n")
+print(best_df[sample_cols].head(50).to_string(index=False))
 
-# optional: save to Excel for manual QA
-excel_path = OUT / "analysis_sample.xlsx"
-display_df.to_excel(excel_path, index=False)
-print(f"\n💾  Sample saved to {excel_path}")
+best_df[sample_cols].head(50).to_excel(
+    OUT/"analysis_sample.xlsx", index=False)
 
-print("\n✅  Analysis complete.  Plots saved to:")
-for f in (png1, png2, png3):
-    print("   ", f)
+print("\n✅  Analysis complete.  Plots saved to augmentation_results/plots/")

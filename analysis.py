@@ -1,16 +1,5 @@
-# ╔══════════════════════════════════════════════════════════════╗
-# ║  augmentation_explorer.py  –  deep-dive utility             ║
-# ║  • Auto-detect every “intent_*” column                       ║
-# ║  • Handles METHOD vs method vs Method header mismatches      ║
-# ║  • Gracefully skips missing fields / plots                   ║
-# ║  • Generates:                                                ║
-# ║      – Overview table                                        ║
-# ║      – Unknown-rate & improved charts                        ║
-# ║      – Top-N intent bars for *each* method                   ║
-# ║      – Crosstab heat-maps baseline→method                    ║
-# ║      – Optional Excel and parquet exports for QA             ║
-# ╚══════════════════════════════════════════════════════════════╝
-import argparse, sys, itertools
+# augmentation_explorer.py  –  full robust version
+import argparse, sys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -21,125 +10,143 @@ import numpy as np
 sns.set_palette("husl")
 plt.style.use("seaborn-v0_8-darkgrid")
 
-# ── CLI ─────────────────────────────────────────────────────────
-parser = argparse.ArgumentParser(
-    description="Explore intent-augmentation outputs in depth")
-parser.add_argument("--outdir", default="augmentation_results",
-                    help="directory containing method_comparison.csv etc.")
-parser.add_argument("--top", type=int, default=15,
-                    help="Top-N intents to plot for each method")
-parser.add_argument("--excel", action="store_true",
-                    help="also write analysis_*.xlsx files for manual QA")
-parser.add_argument("--sample", type=int, default=50,
-                    help="rows to sample for the preview table")
-args = parser.parse_args()
+# ── CLI ──────────────────────────────────────────────────────────
+ap = argparse.ArgumentParser(
+    description="Deep-dive visualisation of intent-augmentation results")
+ap.add_argument("--outdir", default="augmentation_results",
+                help="folder containing method_comparison.csv")
+ap.add_argument("--top", type=int, default=15,
+                help="Top-N intents to show per method")
+ap.add_argument("--excel", action="store_true",
+                help="write .xlsx copies of key tables")
+ap.add_argument("--sample", type=int, default=50,
+                help="sample rows to print / export")
+args = ap.parse_args()
 
-OUT = Path(args.outdir).resolve()
-PLOTS = OUT / "plots"; PLOTS.mkdir(exist_ok=True, parents=True)
+OUT   = Path(args.outdir).resolve()
+PLOTS = OUT / "plots"
+PLOTS.mkdir(parents=True, exist_ok=True)
 
+# ── locate required files ───────────────────────────────────────
 summary_path = next(OUT.glob("method_comparison*.csv"), None)
-aug_path     = next(OUT.glob("best_augmented_data*.csv"), None)
-
-if not summary_path or not aug_path:
-    sys.exit("❌  Could not locate method_comparison.csv or "
+best_path    = next(OUT.glob("best_augmented_data*.csv"), None)
+if not summary_path or not best_path:
+    sys.exit("❌  Could not find method_comparison.csv or "
              "best_augmented_data.csv in {}".format(OUT))
 
-print(f"📂  Using results in {OUT}")
+print("📂  Using results in", OUT)
 
-# ── load summary & baseline/augmented dataset ───────────────────
+# ── read summary & fix header/index issues ──────────────────────
 summary = pd.read_csv(summary_path)
+
+# 1. move index to column if necessary
+if "method" not in summary.columns.str.lower().tolist():
+    # check if there is an unnamed first column (common when index=True)
+    if "Unnamed: 0" in summary.columns:
+        summary.rename(columns={"Unnamed: 0": "method"}, inplace=True)
+    else:
+        summary.reset_index(inplace=True)
+        summary.rename(columns={"index": "method"}, inplace=True)
+
+# 2. normalise headers to lower-case
 summary.columns = [c.lower() for c in summary.columns]
+
+# 3. safety check
 if "method" not in summary.columns:
-    summary.rename(columns=lambda c: c.lower(), inplace=True)   # second attempt
-best_df = pd.read_csv(aug_path)
+    raise SystemExit("Still cannot locate a 'method' column after repair.\n"
+                     f"Current columns: {summary.columns}")
 
-# detect all per-method columns
+best_df = pd.read_csv(best_path)
+
 intent_cols = sorted([c for c in best_df.columns if c.startswith("intent_")])
-print("🛈  Detected intent columns:", intent_cols)
+baseline_col = next((c for c in best_df.columns if c.lower()=="intent_baseline"), None)
 
-# baseline column (if present)
-baseline_col = next((c for c in best_df.columns
-                     if c.lower() == "intent_baseline"), None)
-if baseline_col is None:
-    print("⚠️  No intent_baseline column – baseline→method heat-map will be skipped")
+print("🛈  intent columns found:", intent_cols)
+if not baseline_col:
+    print("⚠️  No explicit intent_baseline column – baseline→method heat-maps skipped")
 
-# ── 1. Overview table (print & optional Excel) ──────────────────
-print("\n=== Method overview =============================")
+# ────────────────────────────────────────────────────────────────
+# 1) OVERVIEW TABLE
+print("\n=== Method overview ===")
 print(summary.to_string(index=False))
 
 if args.excel:
-    summary.to_excel(OUT / "analysis_overview.xlsx", index=False)
+    summary.to_excel(OUT/"analysis_overview.xlsx", index=False)
 
-# ── 2. Unknown-rate bar chart ───────────────────────────────────
+# ────────────────────────────────────────────────────────────────
+# 2) UNKNOWN-RATE BAR
 plt.figure(figsize=(8,4))
-sns.barplot(x=summary["method"], y=summary["unknown_rate"]*100, color="#d95c5c")
+sns.barplot(x="method", y=summary["unknown_rate"]*100, data=summary,
+            palette="Reds_r")
 plt.ylabel("Unknown (%)")
 plt.title("Unknown rate by method")
 plt.xticks(rotation=45, ha="right")
 plt.tight_layout()
-plt.savefig(PLOTS / "explorer_unknown_rates.png", dpi=300)
+plt.savefig(PLOTS/"explorer_unknown_rates.png", dpi=300)
 plt.show()
 
-# ── 3. Improved count chart (if available) ──────────────────────
+# 3) IMPROVED BAR (if present) -----------------------------------
 if "improved" in summary.columns:
     plt.figure(figsize=(8,4))
-    sns.barplot(x=summary["method"], y=summary["improved"], color="#5c9ad9")
+    sns.barplot(x="method", y="improved", data=summary, palette="Blues_r")
     plt.ylabel("Improved records")
     plt.title("Improved-from-baseline")
     plt.xticks(rotation=45, ha="right")
     plt.tight_layout()
-    plt.savefig(PLOTS / "explorer_improved.png", dpi=300)
+    plt.savefig(PLOTS/"explorer_improved.png", dpi=300)
     plt.show()
 
-# ── 4. Top-N intent distribution per method  ────────────────────
+# ────────────────────────────────────────────────────────────────
+# 4) TOP-N INTENTS PER METHOD
 top_n = args.top
-rows = len(intent_cols)
-fig, axes = plt.subplots(rows, 1, figsize=(10, 3*rows), sharex=False)
-
+fig, axes = plt.subplots(len(intent_cols), 1,
+                         figsize=(11, 3*len(intent_cols)),
+                         sharex=False)
 for ax, col in zip(axes, intent_cols):
-    counts = best_df[col].value_counts().head(top_n)
-    sns.barplot(x=counts.values, y=counts.index, ax=ax)
+    vc = best_df[col].value_counts().head(top_n)
+    sns.barplot(x=vc.values, y=vc.index, ax=ax, palette="husl")
     ax.set_title(f"Top {top_n} intents – {col}")
     ax.set_xlabel("Count")
     ax.set_ylabel("")
-
 plt.tight_layout()
-plt.savefig(PLOTS / "explorer_top_intents.png", dpi=300)
+plt.savefig(PLOTS/"explorer_top_intents.png", dpi=300)
 plt.show()
 
-# ── 5. Crosstab heat-map baseline → each method (optional) ──────
+# ────────────────────────────────────────────────────────────────
+# 5) BASELINE → METHOD HEAT-MAPS (if baseline present)
 if baseline_col:
     for col in intent_cols:
-        if col == baseline_col:          # skip baseline vs baseline
+        if col == baseline_col:
             continue
         ct = pd.crosstab(best_df[baseline_col], best_df[col])
-        # show only rows/cols that changed something
-        changed = ct.loc[(ct.sum(axis=1) > 0), (ct.sum(axis=0) > 0)]
-        fig = plt.figure(figsize=(10,8))
-        sns.heatmap(np.log1p(changed), cmap="viridis")
-        plt.title(f"Baseline → {col} (log-scaled counts)")
-        plt.xlabel(col)
+        if ct.shape[0] > 60 or ct.shape[1] > 60:
+            # keep it readable: filter to rows / cols that changed
+            ct = ct.loc[(ct.sum(axis=1) > 0), (ct.sum(axis=0) > 0)]
+        plt.figure(figsize=(10, max(6, 0.3*ct.shape[0])))
+        sns.heatmap(np.log1p(ct), cmap="viridis")
+        plt.title(f"Baseline → {col} (log1p scale)")
         plt.ylabel("Baseline")
+        plt.xlabel(col)
         plt.tight_layout()
-        fname = f"explorer_heatmap_{col}.png"
-        plt.savefig(PLOTS / fname, dpi=300)
+        fn = PLOTS/f"explorer_heatmap_{col}.png"
+        plt.savefig(fn, dpi=300)
         plt.show()
-
         if args.excel:
-            changed.to_excel(OUT / f"heatmap_{col}.xlsx")
+            ct.to_excel(OUT/f"heatmap_{col}.xlsx")
 
-# ── 6. Preview sample rows ──────────────────────────────────────
-print(f"\n=== Preview {args.sample} rows =============================")
-preview_cols = [c for c in ["intent_baseline"] if c in best_df.columns] + intent_cols
+# ────────────────────────────────────────────────────────────────
+# 6) SAMPLE ROWS
+sample_n = min(args.sample, len(best_df))
+preview_cols = ([baseline_col] if baseline_col else []) + intent_cols
 if "intent_augmented" in best_df.columns:
     preview_cols.append("intent_augmented")
+sample_df = best_df[preview_cols].head(sample_n)
 
-sample_df = best_df[preview_cols].head(args.sample)
+print(f"\n=== First {sample_n} rows ==================================================================")
 print(sample_df.to_string(index=False))
 
 if args.excel:
-    sample_df.to_excel(OUT / "analysis_sample.xlsx", index=False)
+    sample_df.to_excel(OUT/"analysis_sample.xlsx", index=False)
+    print("\n💾  Excel exports written to", OUT)
 
-print("\n✅  Explorer finished.  New plots saved into", PLOTS)
-if args.excel:
-    print("💾  Excel exports written to", OUT)
+print("\n✅  Explorer finished – all plots in", PLOTS)

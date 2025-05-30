@@ -605,161 +605,167 @@ class RobustCallCenterPipeline:
         
         self.merged_df = df
         
+    # ------------------------------------------------------------------
+    # Intent augmentation  (new version)  # <<< CHANGED
+    # ------------------------------------------------------------------
     def augment_intent_data(self):
         """
-        Augment intent data using activity patterns
+        Derive a final intent label for every IVR row.
+
+        Priority
+        --------
+        1. Use an existing non-blank IVR/Genesys intent if it already maps.
+        2. Keyword match against the concatenated Contact activity_sequence.
+        3. Keyword match against the single longest-duration activity.
+        4. Otherwise keep "Unknown".
+
+        Extra columns added
+        -------------------
+        • intent_augmented        – final label
+        • intent_confidence       – crude 0-1 score
+        • intent_source           – 'ivr' / 'contact_keyword' / 'contact_duration' / 'unknown'
+        • intent_augmented_flag   – 1 if we replaced an Unknown, else 0
         """
         print("\n" + "=" * 80)
-        print("AUGMENTING INTENT DATA")
+        print("INTENT AUGMENTATION")
         print("=" * 80)
-        
+
         df = self.merged_df
-        
-        # Find intent column
-        intent_col = None
-        for col in df.columns:
-            if 'intent' in col.lower() or col in ['uui_Intent', 'Intent', 'CallIntent']:
-                intent_col = col
-                break
-                
-        # Intent mapping for 26 categories
-        intent_rules = {
-            'Fraud Assistance': ['Fraud', 'Unauthorized', 'Suspicious', 'Security'],
-            'Escheatment': ['Escheat', 'Unclaimed', 'Dormant'],
-            'Balance/Value': ['Balance', 'Value', 'Worth', 'Total'],
-            'Sell': ['Sell', 'Liquidate', 'Redeem'],
-            'Repeat Caller': ['Repeat', 'Multiple', 'Again', 'Previous'],
-            'Name Change': ['Name', 'Marriage', 'Divorce', 'Legal Name'],
-            'Buy Stock': ['Buy', 'Purchase', 'Acquire', 'Stock Buy'],
-            'Statement': ['Statement', 'Document', 'Report'],
-            'Recent Activity': ['Recent', 'Activity', 'Transaction', 'History'],
-            'Corporate Action': ['Corporate', 'Merger', 'Split', 'Action'],
-            'Data Protection': ['Data', 'GDPR', 'Privacy', 'Protection'],
-            'Press and Media': ['Press', 'Media', 'News', 'Publication'],
-            'Privacy Breach': ['Breach', 'Leak', 'Compromise', 'Privacy'],
-            'Consolidation': ['Consolidate', 'Combine', 'Merge Account'],
-            'Proxy Inquiry': ['Proxy', 'Vote', 'Voting', 'Shareholder'],
-            'Complaint Call': ['Complaint', 'Complain', 'Dissatisfied', 'Unhappy'],
-            'General Inquiry': ['General', 'Question', 'Information', 'Query'],
-            'Tax Information': ['Tax', '1099', 'IRS', 'Tax Form'],
-            'Banking Details': ['Bank', 'ACH', 'Wire', 'Banking'],
-            'Dividend Payment': ['Dividend', 'Distribution', 'Payout'],
-            'Address Change': ['Address', 'Move', 'Relocate', 'ZIP'],
-            'Check Replacement': ['Check', 'Replace', 'Lost Check', 'Reissue'],
-            'Stock Quote': ['Quote', 'Price', 'Market', 'Stock Price'],
-            'Beneficiary Information': ['Beneficiary', 'Heir', 'Estate', 'Death'],
-            'Dividend Reinvestment': ['DRIP', 'Reinvest', 'Reinvestment'],
-            'Certificate Issuance': ['Certificate', 'Physical', 'Paper'],
-            'Transfer': ['Transfer', 'Move', 'Send', 'Transfer Agent'],
-            'Existing IC User Login Problem': ['Login', 'Password', 'Access', 'Existing User'],
-            'New IC User Login Problem': ['New User', 'Register', 'Signup', 'Create Account'],
-            'Fulfillment': ['Fulfill', 'Request', 'Send', 'Mail'],
-            'Enrolment': ['Enroll', 'Enrol', 'Join', 'Subscribe'],
-            'Associate': ['Associate', 'Link', 'Connect', 'Add'],
-            'Lost Certificate': ['Lost Certificate', 'Missing Certificate', 'Can\'t Find'],
-            'Blank': ['Blank', 'Empty', 'No Data'],
-            'Unknown': ['Unknown', 'Other', 'Misc']
+
+        # ------------------------------------------------------------------
+        # 1. Dictionaries
+        # ------------------------------------------------------------------
+        STANDARD_INTENTS = {
+            "Fraud Assistance": ["fraud", "unauthorized", "suspicious"],
+            "Escheatment": ["escheat", "unclaimed"],
+            "Balance/Value": ["balance", "value", "worth"],
+            "Sell": ["sell", "liquidate", "redeem"],
+            "Repeat Caller": ["repeat", "again"],
+            "Name Change": ["name change", "marriage", "divorce"],
+            "Buy Stock": ["buy", "purchase", "acquire"],
+            "Statement": ["statement", "document"],
+            "Recent Activity": ["recent activity", "history"],
+            "Corporate Action": ["corporate action", "merger", "split"],
+            "Data Protection": ["gdpr", "privacy"],
+            "Press and Media": ["press", "media"],
+            "Privacy Breach": ["breach", "leak"],
+            "Consolidation": ["consolidate", "combine"],
+            "Proxy Inquiry": ["proxy", "vote"],
+            "Complaint Call": ["complaint", "unhappy"],
+            "General Inquiry": ["question", "information"],
+            "Tax Information": ["tax", "irs", "1099"],
+            "Banking Details": ["bank", "wire", "ach"],
+            "Dividend Payment": ["dividend", "payout"],
+            "Address Change": ["address"],
+            "Check Replacement": ["check", "cheque", "reissue"],
+            "Stock Quote": ["quote", "price"],
+            "Beneficiary Information": ["beneficiary", "estate"],
+            "Dividend Reinvestment": ["drip", "reinvest"],
+            "Certificate Issuance": ["certificate", "paper"],
+            "Transfer": ["transfer"],
+            "Existing IC User Login Problem": ["login", "password"],
+            "New IC User Login Problem": ["register", "signup"],
+            "Fulfillment": ["fulfill", "mail"],
+            "Enrolment": ["enrol", "subscribe"],
+            "Associate": ["associate", "link"],
+            "Lost Certificate": ["lost certificate"],
         }
-        
-        # Letter to intent mapping
-        letter_to_intent = {
-            'a': 'Balance/Value', 'b': 'Sell', 'c': 'Repeat Caller',
-            'd': 'Name Change', 'e': 'Buy Stock', 'f': 'Statement',
-            'g': 'Recent Activity', 'h': 'Tax Information', 'i': 'Banking Details',
-            'j': 'Dividend Payment', 'k': 'Address Change', 'l': 'Check Replacement',
-            'm': 'Stock Quote', 'n': 'Beneficiary Information', 'o': 'Dividend Reinvestment',
-            'p': 'Certificate Issuance', 'q': 'Transfer', 'r': 'Existing IC User Login Problem',
-            's': 'New IC User Login Problem', 't': 'Fulfillment', 'u': 'Enrolment',
-            'w': 'Associate', 'x': 'Lost Certificate', 'y': 'Blank', 'z': 'Unknown'
+
+        LETTER_CODE = {
+            "a": "Balance/Value",
+            "b": "Sell",
+            "c": "Repeat Caller",
+            "d": "Name Change",
+            "e": "Buy Stock",
+            "f": "Statement",
+            "g": "Recent Activity",
+            "h": "Tax Information",
+            "i": "Banking Details",
+            "j": "Dividend Payment",
+            "k": "Address Change",
+            "l": "Check Replacement",
+            "m": "Stock Quote",
+            "n": "Beneficiary Information",
+            "o": "Dividend Reinvestment",
+            "p": "Certificate Issuance",
+            "q": "Transfer",
+            "r": "Existing IC User Login Problem",
+            "s": "New IC User Login Problem",
+            "t": "Fulfillment",
+            "u": "Enrolment",
+            "w": "Associate",
+            "x": "Lost Certificate",
+            "y": "Blank",
+            "z": "Unknown",
         }
-        
-        def infer_intent(row):
-            # Check if we have an existing intent
-            if intent_col and pd.notna(row.get(intent_col)):
-                current_intent = str(row.get(intent_col)).strip()
-                
-                # Check if it's already one of our 26 categories
-                if current_intent in intent_rules.keys():
-                    return current_intent, 1.0
-                    
-                # Check if it's a letter code
-                if current_intent.lower() in letter_to_intent:
-                    return letter_to_intent[current_intent.lower()], 1.0
-                    
-            # Try to infer from activity sequence
-            if pd.notna(row.get('activity_sequence')):
-                activities = str(row['activity_sequence']).lower()
-                
-                best_match = None
-                best_score = 0
-                
-                for intent, keywords in intent_rules.items():
-                    matches = sum(1 for keyword in keywords if keyword.lower() in activities)
-                    if matches > best_score:
-                        best_score = matches
-                        best_match = intent
-                        
-                if best_match and best_score > 0:
-                    confidence = min(best_score / 3, 1.0)
-                    return best_match, confidence
-                    
-            return 'Unknown', 0.0
-            
-        # Apply inference
-        print(f"  Processing {len(df)} records...")
-        df[['intent_augmented', 'intent_confidence']] = df.apply(
-            lambda row: pd.Series(infer_intent(row)), axis=1
+
+        # ------------------------------------------------------------------
+        # 2. Locate base columns
+        # ------------------------------------------------------------------
+        ivr_intent_col = next(
+            (c for c in df.columns if c.lower() in ["intent", "callintent", "uui_intent"]), None
         )
-        
-        # Create intent categories
-        df['intent_category'] = df['intent_augmented'].map({
-            'Balance/Value': 'Financial',
-            'Sell': 'Trading',
-            'Buy Stock': 'Trading',
-            'Stock Quote': 'Trading',
-            'Dividend Payment': 'Financial',
-            'Dividend Reinvestment': 'Financial',
-            'Banking Details': 'Financial',
-            'Tax Information': 'Financial',
-            'Name Change': 'Account Management',
-            'Address Change': 'Account Management',
-            'Transfer': 'Account Management',
-            'Consolidation': 'Account Management',
-            'Enrolment': 'Account Management',
-            'Associate': 'Account Management',
-            'Statement': 'Documents',
-            'Certificate Issuance': 'Documents',
-            'Lost Certificate': 'Documents',
-            'Check Replacement': 'Documents',
-            'Fulfillment': 'Documents',
-            'Fraud Assistance': 'Security',
-            'Data Protection': 'Compliance',
-            'Privacy Breach': 'Security',
-            'Escheatment': 'Compliance',
-            'Corporate Action': 'Corporate',
-            'Proxy Inquiry': 'Corporate',
-            'Beneficiary Information': 'Estate',
-            'Complaint Call': 'Support',
-            'General Inquiry': 'Support',
-            'Recent Activity': 'Support',
-            'Repeat Caller': 'Support',
-            'Existing IC User Login Problem': 'Technical Support',
-            'New IC User Login Problem': 'Technical Support',
-            'Press and Media': 'Other',
-            'Blank': 'Other',
-            'Unknown': 'Unknown'
-        }).fillna('Other')
-        
-        # Report statistics
-        if intent_col:
-            unknown_before = (df[intent_col].str.lower() == 'unknown').sum() if intent_col in df.columns else 0
-            unknown_after = (df['intent_augmented'] == 'Unknown').sum()
-            print(f"  ✓ Reduced unknown intents from {unknown_before} to {unknown_after}")
-        else:
-            print(f"  ✓ Created intent classification for all records")
-            
+        longest_activity_col = (
+            "last_activity" if "last_activity" in df.columns else None
+        )
+
+        # ------------------------------------------------------------------
+        # 3. Inference helper
+        # ------------------------------------------------------------------
+        def infer_intent(row):
+            # 1️⃣  use IVR if valid
+            if ivr_intent_col and pd.notna(row[ivr_intent_col]):
+                raw = str(row[ivr_intent_col]).strip()
+                if raw in STANDARD_INTENTS:
+                    return raw, 1.0, "ivr"
+                if raw.lower() in LETTER_CODE:
+                    return LETTER_CODE[raw.lower()], 1.0, "ivr"
+
+            # 2️⃣  keyword search on activity_sequence
+            if pd.notna(row.get("activity_sequence")):
+                seq = str(row["activity_sequence"]).lower()
+                for intent, kws in STANDARD_INTENTS.items():
+                    hits = sum(kw in seq for kw in kws)
+                    if hits:
+                        return intent, min(hits / 3, 1.0), "contact_keyword"
+
+            # 3️⃣  look at single longest activity (last_activity)
+            if longest_activity_col and pd.notna(row.get(longest_activity_col)):
+                act = str(row[longest_activity_col]).lower()
+                for intent, kws in STANDARD_INTENTS.items():
+                    if any(kw in act for kw in kws):
+                        return intent, 0.4, "contact_duration"
+
+            # 4️⃣  give up
+            return "Unknown", 0.0, "unknown"
+
+        # ------------------------------------------------------------------
+        # 4. Apply and store
+        # ------------------------------------------------------------------
+        res = df.apply(lambda r: pd.Series(infer_intent(r)), axis=1)
+        res.columns = ["intent_augmented", "intent_confidence", "intent_source"]
+        df[["intent_augmented", "intent_confidence", "intent_source"]] = res
+        df["intent_augmented_flag"] = (df["intent_source"] != "ivr").astype(int)
+
+        # ------------------------------ DEBUG ------------------------------
+        unknown_before = (
+            df[ivr_intent_col].str.lower().eq("unknown").sum()
+            if ivr_intent_col else len(df)
+        )
+        unknown_after = df["intent_augmented"].eq("Unknown").sum()
+        print(
+            f"✓ Unknown intents reduced  {unknown_before:,} ➜ {unknown_after:,} "
+            f"({unknown_after/len(df):.1%})"
+        )
+
+        print("\nTop 10 intents:")
+        print(df["intent_augmented"].value_counts().head(10).to_string())
+        print("\nIntent sources:")
+        print(df["intent_source"].value_counts(dropna=False).to_string())
+        print("=" * 80)
+        # ------------------------------------------------------------------
+
         self.merged_df = df
-        
     def create_call_metrics(self):
         """
         Create comprehensive call-level metrics

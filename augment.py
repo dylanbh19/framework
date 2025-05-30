@@ -298,42 +298,76 @@ class IntentAugmentor:
     # ==========================================================================
     # 5. Zero-shot (BART-MNLI) – CPU friendly
     # ==========================================================================
+        # ==========================================================================
+    # 5. ZERO-SHOT  (fast CPU/GPU – batched, distilled model)
+    # ==========================================================================
     def zeroshot(self):
+        """
+        Zero-shot classification using a distilled MNLI model
+        (valhalla/distilbart-mnli-12-3).  Batched inference for speed.
+        """
         if not HAS_TRF:
             log.warning("zeroshot skipped – transformers not installed")
             return
-        log.info("Running zero-shot (BART-MNLI, CPU) …")
+
         t0 = time.time()
+        log.info("Running zero-shot (distilbart-mnli-12-3, batched) …")
 
-        zpipe = pipeline("zero-shot-classification",
-                         model="facebook/bart-large-mnli", device=-1)
-        labels = [i for i in self.STD if i != "Unknown"]
+        # ── choose compact model & pipeline
+        zpipe = pipeline(
+            "zero-shot-classification",
+            model="valhalla/distilbart-mnli-12-3",  # ~50 % size of bart-large
+            device=-1                               # -1 = CPU   (GPU index otherwise)
+        )
 
-        unk = self.df["intent_base"] == "Unknown"
-        if not unk.any():
+        candidate_labels = [i for i in self.STD if i != "Unknown"]
+
+        # ── grab only rows that still need a label
+        unk_mask = self.df["intent_base"] == "Unknown"
+        total_unk = int(unk_mask.sum())
+        if total_unk == 0:
             self._store_stats("zeroshot", "intent_rule", t0)
             return
+        log.info("Zero-shot will process %d unknown rows", total_unk)
 
+        # ── shorten text to 256 chars (speed!)
         texts = (
-            self.df.loc[unk, "activity_sequence"].fillna("") + " " +
-            self.df.loc[unk, "first_activity"].fillna("") + " " +
-            self.df.loc[unk, "last_activity"].fillna("")
-        ).tolist()
+            self.df.loc[unk_mask, "activity_sequence"].fillna("") + " " +
+            self.df.loc[unk_mask, "first_activity"].fillna("") + " " +
+            self.df.loc[unk_mask, "last_activity"].fillna("")
+        ).str.slice(0, 256).tolist()   # truncate
 
+        batch_size = 16          # tweak to your RAM / CPU
         preds, confs, expl = [], [], []
-        for txt in tqdm(texts, unit="call"):
-            out = zpipe(txt, candidate_labels=labels, multi_label=False)
-            preds.append(out["labels"][0])
-            confs.append(float(out["scores"][0]))
-            tokens = sorted(txt.split(), key=len, reverse=True)[:3]
-            expl.append(" | ".join(tokens))
 
-        self.df.loc[unk, "intent_zeroshot"]   = preds
-        self.df.loc[unk, "conf_zeroshot"]     = confs
-        self.df.loc[unk, "explain_zeroshot"]  = expl
-        self.df.loc[~unk, "intent_zeroshot"]  = self.df.loc[~unk, "intent_rule"]
-        self.df.loc[~unk, "conf_zeroshot"]    = 1.0
-        self.df.loc[~unk, "explain_zeroshot"] = ""
+        # ── batch inference with tqdm
+        for i in tqdm(range(0, total_unk, batch_size), unit="batch"):
+            batch = texts[i:i + batch_size]
+            outputs = zpipe(batch,
+                            candidate_labels=candidate_labels,
+                            multi_label=False,
+                            batch_size=batch_size,
+                            truncation=True,  # in case text>512
+                            top_k=1)          # only best label
+            for out in outputs:
+                preds.append(out["labels"][0])
+                confs.append(float(out["scores"][0]))
+                # crude explanation = 3 longest tokens (optional)
+                tk = sorted(out["sequence"].split(), key=len, reverse=True)[:3]
+                expl.append(" | ".join(tk))
+
+        # ── write back
+        self.df.loc[unk_mask, "intent_zeroshot"]   = preds
+        self.df.loc[unk_mask, "conf_zeroshot"]     = confs
+        self.df.loc[unk_mask, "explain_zeroshot"]  = expl
+
+        # copy over for rows already labelled
+        self.df.loc[~unk_mask, ["intent_zeroshot"]]  = self.df.loc[~unk_mask, "intent_rule"].values
+        self.df.loc[~unk_mask, ["conf_zeroshot"]]    = 1.0
+        self.df.loc[~unk_mask, ["explain_zeroshot"]] = ""
+
+        # store pipeline for potential reuse
+        self.models["zeroshot_pipeline"] = zpipe
 
         self._store_stats("zeroshot", "intent_zeroshot", t0)
 

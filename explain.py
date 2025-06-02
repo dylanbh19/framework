@@ -80,3 +80,97 @@ plt.savefig("explainability_outputs/shap_summary.png", dpi=300)
 
 
 
+
+
+
+
+
+
+# intent_explain_runner.py  ────────────────────────────────────────────────
+"""
+No-argument explainability helper.
+
+• Finds the most recent augmentation_results* folder.
+• Reads best_augmented_data.csv + rf_top_tokens.csv (if present).
+• Creates PNG plots + Excel QA sample in explainability_outputs/.
+"""
+import sys, json, re
+from pathlib import Path
+from datetime import datetime
+
+import pandas as pd
+import numpy as np
+import seaborn as sns
+import matplotlib.pyplot as plt
+
+sns.set_palette("husl")
+plt.style.use("seaborn-v0_8-darkgrid")
+
+# ── 1. locate latest results folder ───────────────────────────────────────
+root = Path.cwd()
+cands = sorted([p for p in root.glob("augmentation_results*") if p.is_dir()],
+               key=lambda p: p.stat().st_mtime, reverse=True)
+
+if not cands:
+    sys.exit("❌  No augmentation_results* folder found in " + str(root))
+
+OUT = cands[0]                       # newest
+print("ℹ️  Using results in:", OUT)
+
+best_csv  = next(OUT.glob("best_augmented_data*.csv"), None)
+rf_tokens = OUT / "rf_top_tokens.csv"
+if not best_csv:
+    sys.exit("❌  best_augmented_data*.csv not found in " + str(OUT))
+
+# ── 2. load data ──────────────────────────────────────────────────────────
+df = pd.read_csv(best_csv, low_memory=False)
+exp_dir = root / "explainability_outputs"
+exp_dir.mkdir(exist_ok=True)
+
+# ── 3. feature-importance plot (if ML ran) ────────────────────────────────
+if rf_tokens.exists():
+    tok = pd.read_csv(rf_tokens).head(25)
+    plt.figure(figsize=(6, 6))
+    sns.barplot(x="importance", y="token", data=tok, color="#4c72b0")
+    plt.title("Random-Forest – top tokens")
+    plt.tight_layout()
+    plt.savefig(exp_dir / "exp_feature_importance.png", dpi=300)
+    plt.close()
+    print("• exp_feature_importance.png")
+
+# ── 4. confidence boxplot for top intents ─────────────────────────────────
+top_n = 15
+top_ints = df["intent_augmented"].value_counts().head(top_n).index
+plt.figure(figsize=(10, 5))
+sns.boxplot(x="intent_augmented", y="intent_confidence",
+            data=df[df["intent_augmented"].isin(top_ints)],
+            showfliers=False)
+plt.xticks(rotation=45, ha="right")
+plt.ylabel("Confidence")
+plt.title(f"Confidence distribution – top {top_n} intents")
+plt.tight_layout()
+plt.savefig(exp_dir / "exp_confidence_boxplot.png", dpi=300)
+plt.close()
+print("• exp_confidence_boxplot.png")
+
+# ── 5. sample QA sheet ────────────────────────────────────────────────────
+sample_cols = [c for c in [
+    "intent_augmented", "intent_confidence", "aug_method",
+    "intent_source"      if "intent_source"      in df.columns else None,
+    "explain_zeroshot"   if "explain_zeroshot"   in df.columns else None,
+    "first_activity"     if "first_activity"     in df.columns else None,
+    "last_activity"      if "last_activity"      in df.columns else None,
+    "activity_sequence"  if "activity_sequence"  in df.columns else None,
+] if c]
+
+sample_df = df.sample(min(200, len(df)), random_state=1)[sample_cols]
+sample_df.to_excel(exp_dir / "exp_sample.xlsx", index=False)
+print("• exp_sample.xlsx (200-row QA sample)")
+
+# ── 6. console summary ────────────────────────────────────────────────────
+unknown = (df["intent_augmented"] == "Unknown").mean() * 100
+print(f"\nDone – Unknown after augmentation: {unknown:.2f}%")
+print("Outputs saved to:", exp_dir)
+
+
+

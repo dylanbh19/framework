@@ -1,88 +1,104 @@
-# intent_explain_runner.py  ── fixed 2025-05-30 ────────────────────────────
+# compare_unknown_vs_intent.py  ────────────────────────────────────────────
 """
-• Auto-detect newest augmentation_results* folder
-• Load best_augmented_data.csv
-• Build overlay plot comparing activity distributions
-• Write PNG + Excel sample to explainability_outputs/
+Visual compare: Unknown vs <chosen intent> contact activities
+============================================================
+
+• Automatically detects newest augmentation_results* folder.
+• Asks which intent to compare (defaults to top volume intent).
+• Produces scatter plot:
+      X-axis = % share of each activity inside UNKNOWN calls
+      Y-axis = % share of same activity inside CHOSEN intent calls
+      green △ = share inside 'Unknown ➜ predicted as CHOSEN'
+• Saves PNG in scatter_compare_outputs/.
 """
 
-import sys
 from pathlib import Path
+import sys, textwrap
+
 import pandas as pd
-import seaborn as sns
 import matplotlib.pyplot as plt
+import seaborn as sns
 
-sns.set_palette("husl"); plt.style.use("seaborn-v0_8-darkgrid")
+sns.set_palette("husl")
+plt.style.use("seaborn-v0_8-darkgrid")
 
-root = Path.cwd()
-folders = sorted([p for p in root.glob("augmentation_results*") if p.is_dir()],
-                 key=lambda p: p.stat().st_mtime, reverse=True)
+# ── 1. find newest augmentation_results folder ───────────────────────────
+base = Path.cwd()
+folders = sorted([p for p in base.glob("augmentation_results*") if p.is_dir()],
+                 key=lambda p: p.stat().st_mtime,
+                 reverse=True)
 if not folders:
-    sys.exit("❌  No augmentation_results* folder here")
-OUT = folders[0]
-print("ℹ️  Using", OUT)
+    sys.exit("❌  No augmentation_results* folder found")
 
-csv = next(OUT.glob("best_augmented_data*.csv"), None)
+out_dir = folders[0]
+csv = next(out_dir.glob("best_augmented_data*.csv"), None)
 if not csv:
-    sys.exit("❌  best_augmented_data*.csv missing in " + str(OUT))
+    sys.exit("❌  best_augmented_data*.csv not found in " + str(out_dir))
+
 df = pd.read_csv(csv, low_memory=False)
+print("ℹ️  Loaded", csv.name, "from", out_dir)
 
-# ── intents to compare ────────────────────────────────────────────────────
-top5 = (df["intent_augmented"]
-        .value_counts()
-        .loc[lambda s: s.index != "Unknown"]
-        .head(5)
-        .index.tolist())
-groups = ["Unknown"] + top5
-print("👉  Groups:", groups)
+# ── 2. choose intent ──────────────────────────────────────────────────────
+top_intent = (df["intent_augmented"]
+              .value_counts()
+              .loc[lambda s: s.index != "Unknown"]
+              .idxmax())
+print("\nTop-volume intent is:", top_intent)
+chosen = input("Enter intent to compare (blank = use top): ").strip() or top_intent
+if chosen not in df["intent_augmented"].unique():
+    sys.exit(f"❌  Intent '{chosen}' not present in data")
 
-# ── explode activity_sequence ─────────────────────────────────────────────
-def explode(seq):
-    return [a.strip() for a in str(seq).split("|") if a.strip()]
+print("Comparing UNKNOWN ↔", chosen)
 
-exp_rows = []
-for intent in groups:
-    acts = sum((explode(s) for s in df.loc[df["intent_augmented"] == intent,
-                                           "activity_sequence"].fillna("")), [])
-    cnt = pd.Series(acts).value_counts()
-    exp_rows.append(pd.DataFrame({"intent": intent,
-                                  "activity": cnt.index,
-                                  "count": cnt.values}))
-freq = pd.concat(exp_rows, ignore_index=True)
+# ── 3. helpers ────────────────────────────────────────────────────────────
+def explode(series):
+    """'Act1|Act2' -> ['Act1','Act2', …]"""
+    return [a.strip() for s in series.fillna("") for a in str(s).split("|") if a.strip()]
 
-# ── keep activities that appear ≥1 % in ANY group ────────────────────────
-pivot = (freq.pivot_table(index="activity", columns="intent",
-                          values="count", fill_value=0))
-pct   = pivot.div(pivot.sum()) * 100
-keep  = pct.max(axis=1).ge(1.0)      # ≥1 %
-freq  = freq[freq["activity"].isin(keep.index[keep])]
+def pct_table(mask):
+    acts = explode(df.loc[mask, "activity_sequence"])
+    if not acts:
+        return pd.Series(dtype=float)
+    s = pd.Series(acts).value_counts()
+    return s / s.sum() * 100   # percent
 
-# convert to percentage within intent
-freq["pct"] = (freq.groupby("intent")["count"]
-                     .transform(lambda x: x / x.sum() * 100))
+pct_unknown          = pct_table(df["intent_augmented"] == "Unknown")
+pct_intent           = pct_table(df["intent_augmented"] == chosen)
+pct_predicted_group  = pct_table(
+    (df["intent_base"] == "Unknown") & (df["intent_augmented"] == chosen)
+)
 
-# ── plot overlay ─────────────────────────────────────────────────────────
-plt.figure(figsize=(11, 0.5 + 1.8*len(keep)))
-for idx, intent in enumerate(groups, start=1):
-    sub = freq[freq["intent"] == intent]
-    sns.barplot(x="pct", y="activity", data=sub,
-                label=intent, alpha=0.55)
-plt.title("Activity share per intent (overlay)")
-plt.xlabel("Share within intent (%)")
+# make aligned dataframe
+all_acts = pct_unknown.index.union(pct_intent.index).union(pct_predicted_group.index)
+data = pd.DataFrame({
+    "pct_unknown":          pct_unknown.reindex(all_acts, fill_value=0),
+    "pct_intent":           pct_intent.reindex(all_acts, fill_value=0),
+    "pct_predicted_group":  pct_predicted_group.reindex(all_acts, fill_value=0)
+}).reset_index().rename(columns={"index":"activity"})
+
+# ── 4. scatter plot ───────────────────────────────────────────────────────
+plt.figure(figsize=(8, 8))
+plt.scatter(data["pct_unknown"], data["pct_intent"],
+            s=40, alpha=0.65, label="All " + chosen, color="#ff7f0e")
+plt.scatter(data["pct_unknown"], data["pct_predicted_group"],
+            s=45, marker="^", alpha=0.75, label="Unknown ➜ " + chosen,
+            color="#2ca02c")
+plt.axline((0,0), slope=1, linestyle="--", color="#999", lw=1)
+
+# label biggest outliers
+for _, row in data.sort_values("pct_intent", ascending=False).head(10).iterrows():
+    plt.text(row["pct_unknown"]+0.1, row["pct_intent"]+0.1,
+             row["activity"], fontsize=8)
+
+plt.xlabel("% share inside UNKNOWN")
+plt.ylabel(f"% share inside {chosen}")
+plt.title(f"Activity distribution – Unknown vs {chosen}")
 plt.legend()
 plt.tight_layout()
 
-exp_dir = root / "explainability_outputs"
-exp_dir.mkdir(exist_ok=True)
-plt.savefig(exp_dir / "activity_profile_overlay.png", dpi=300)
-plt.close()
-print("✓  activity_profile_overlay.png written to", exp_dir)
+save_dir = Path("scatter_compare_outputs"); save_dir.mkdir(exist_ok=True)
+fname = save_dir / f"scatter_unknown_vs_{chosen.replace(' ','_')}.png"
+plt.savefig(fname, dpi=300)
+plt.show()
 
-# ── Excel QA sample (unchanged) ──────────────────────────────────────────
-cols = ["intent_augmented","intent_confidence","aug_method",
-        *(c for c in ["explain_zeroshot","intent_source",
-                      "first_activity","last_activity","activity_sequence"]
-          if c in df.columns)]
-df.sample(min(200, len(df)), random_state=2)[cols] \
-  .to_excel(exp_dir / "exp_sample.xlsx", index=False)
-print("✓  exp_sample.xlsx written to", exp_dir)
+print("\n✓ Plot saved to", fname)

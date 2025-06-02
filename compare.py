@@ -1,104 +1,108 @@
-# compare_unknown_vs_intent.py  ────────────────────────────────────────────
+# compare_top3_intents.py  ────────────────────────────────────────────────
 """
-Visual compare: Unknown vs <chosen intent> contact activities
-============================================================
+Visual comparison of Unknown vs Top-3 predicted intents.
 
-• Automatically detects newest augmentation_results* folder.
-• Asks which intent to compare (defaults to top volume intent).
-• Produces scatter plot:
-      X-axis = % share of each activity inside UNKNOWN calls
-      Y-axis = % share of same activity inside CHOSEN intent calls
-      green △ = share inside 'Unknown ➜ predicted as CHOSEN'
-• Saves PNG in scatter_compare_outputs/.
+ • Auto-detect newest augmentation_results* folder
+ • No user arguments / prompts
+ • Makes one 3-panel scatter plot:
+       x-axis = % of activity in UNKNOWN calls
+       y-axis = % of activity in INTENT calls
+       green △ = share within “Unknown ➜ INTENT” predictions
+ • Saves PNG to scatter_compare_outputs/top3_scatter_unknown_vs_intents.png
 """
 
 from pathlib import Path
-import sys, textwrap
+import sys, itertools
 
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
-
 sns.set_palette("husl")
 plt.style.use("seaborn-v0_8-darkgrid")
 
-# ── 1. find newest augmentation_results folder ───────────────────────────
-base = Path.cwd()
-folders = sorted([p for p in base.glob("augmentation_results*") if p.is_dir()],
-                 key=lambda p: p.stat().st_mtime,
-                 reverse=True)
+# ── locate latest results folder ─────────────────────────────────────────
+root = Path.cwd()
+folders = sorted([p for p in root.glob("augmentation_results*") if p.is_dir()],
+                 key=lambda p: p.stat().st_mtime, reverse=True)
 if not folders:
-    sys.exit("❌  No augmentation_results* folder found")
+    sys.exit("❌  No augmentation_results* folder found.")
 
-out_dir = folders[0]
-csv = next(out_dir.glob("best_augmented_data*.csv"), None)
-if not csv:
-    sys.exit("❌  best_augmented_data*.csv not found in " + str(out_dir))
+res_dir = folders[0]
+csv_file = next(res_dir.glob("best_augmented_data*.csv"), None)
+if not csv_file:
+    sys.exit("❌  best_augmented_data*.csv missing in " + str(res_dir))
 
-df = pd.read_csv(csv, low_memory=False)
-print("ℹ️  Loaded", csv.name, "from", out_dir)
+df = pd.read_csv(csv_file, low_memory=False)
+print("ℹ️  Loaded", csv_file)
 
-# ── 2. choose intent ──────────────────────────────────────────────────────
-top_intent = (df["intent_augmented"]
-              .value_counts()
-              .loc[lambda s: s.index != "Unknown"]
-              .idxmax())
-print("\nTop-volume intent is:", top_intent)
-chosen = input("Enter intent to compare (blank = use top): ").strip() or top_intent
-if chosen not in df["intent_augmented"].unique():
-    sys.exit(f"❌  Intent '{chosen}' not present in data")
+# ── identify Unknown + top-3 intents ──────────────────────────────────────
+if "intent_augmented" not in df.columns:
+    sys.exit("❌  Column 'intent_augmented' not found in CSV")
 
-print("Comparing UNKNOWN ↔", chosen)
+vc        = df["intent_augmented"].value_counts()
+top3_ints = vc.loc[lambda s: s.index != "Unknown"].head(3).index.tolist()
+print("Top-3 predicted intents:", top3_ints)
 
-# ── 3. helpers ────────────────────────────────────────────────────────────
-def explode(series):
-    """'Act1|Act2' -> ['Act1','Act2', …]"""
-    return [a.strip() for s in series.fillna("") for a in str(s).split("|") if a.strip()]
+# helper: explode activity_sequence --------------------------------------
+def explode(seq_series):
+    return [a.strip() for seq in seq_series.fillna("")
+                          for a in str(seq).split("|") if a.strip()]
 
-def pct_table(mask):
-    acts = explode(df.loc[mask, "activity_sequence"])
-    if not acts:
+def pct_table(row_mask):
+    acts = explode(df.loc[row_mask, "activity_sequence"])
+    if not acts:                      # empty safeguard
         return pd.Series(dtype=float)
-    s = pd.Series(acts).value_counts()
-    return s / s.sum() * 100   # percent
+    freq = pd.Series(acts).value_counts()
+    return freq / freq.sum() * 100
 
-pct_unknown          = pct_table(df["intent_augmented"] == "Unknown")
-pct_intent           = pct_table(df["intent_augmented"] == chosen)
-pct_predicted_group  = pct_table(
-    (df["intent_base"] == "Unknown") & (df["intent_augmented"] == chosen)
-)
+pct_unknown = pct_table(df["intent_augmented"] == "Unknown")
 
-# make aligned dataframe
-all_acts = pct_unknown.index.union(pct_intent.index).union(pct_predicted_group.index)
-data = pd.DataFrame({
-    "pct_unknown":          pct_unknown.reindex(all_acts, fill_value=0),
-    "pct_intent":           pct_intent.reindex(all_acts, fill_value=0),
-    "pct_predicted_group":  pct_predicted_group.reindex(all_acts, fill_value=0)
-}).reset_index().rename(columns={"index":"activity"})
+# ── prep dataframe for each intent ───────────────────────────────────────
+frames = []
+for intent in top3_ints:
+    pct_int   = pct_table(df["intent_augmented"] == intent)
+    pct_pred  = pct_table(
+        (df["intent_augmented"] == intent) & (df["Intent"].fillna("Unknown") == "Unknown")
+        if "Intent" in df.columns else
+        (df["intent_augmented"] == intent)  # if no baseline, same mask
+    )
+    acts = pct_unknown.index.union(pct_int.index).union(pct_pred.index)
+    frames.append(pd.DataFrame({
+        "activity": acts,
+        "pct_unknown": pct_unknown.reindex(acts, fill_value=0),
+        "pct_intent":  pct_int.reindex(acts,   fill_value=0),
+        "pct_pred":    pct_pred.reindex(acts,  fill_value=0),
+        "intent": intent
+    }))
 
-# ── 4. scatter plot ───────────────────────────────────────────────────────
-plt.figure(figsize=(8, 8))
-plt.scatter(data["pct_unknown"], data["pct_intent"],
-            s=40, alpha=0.65, label="All " + chosen, color="#ff7f0e")
-plt.scatter(data["pct_unknown"], data["pct_predicted_group"],
-            s=45, marker="^", alpha=0.75, label="Unknown ➜ " + chosen,
-            color="#2ca02c")
-plt.axline((0,0), slope=1, linestyle="--", color="#999", lw=1)
+plot_df = pd.concat(frames, ignore_index=True)
 
-# label biggest outliers
-for _, row in data.sort_values("pct_intent", ascending=False).head(10).iterrows():
-    plt.text(row["pct_unknown"]+0.1, row["pct_intent"]+0.1,
-             row["activity"], fontsize=8)
+# ── create 3-panel scatter ───────────────────────────────────────────────
+fig, axes = plt.subplots(1, 3, figsize=(16, 5), sharex=True, sharey=True)
+fig.suptitle("Unknown vs Top-3 Intent Activity Distributions", fontsize=14)
 
-plt.xlabel("% share inside UNKNOWN")
-plt.ylabel(f"% share inside {chosen}")
-plt.title(f"Activity distribution – Unknown vs {chosen}")
-plt.legend()
-plt.tight_layout()
+for ax, intent in zip(axes, top3_ints):
+    sub = plot_df[plot_df["intent"] == intent]
+    ax.scatter(sub["pct_unknown"], sub["pct_intent"],
+               s=35, alpha=0.6, label=intent, color="#ff7f0e")
+    ax.scatter(sub["pct_unknown"], sub["pct_pred"],
+               s=40, alpha=0.8, marker="^", label="Unknown→"+intent,
+               color="#2ca02c")
+    ax.axline((0, 0), slope=1, linestyle="--", color="#888", lw=1)
+    ax.set_title(intent)
+    # label top 5 outliers
+    lab = sub.sort_values("pct_intent", ascending=False).head(5)
+    for _, r in lab.iterrows():
+        ax.text(r["pct_unknown"]+0.1, r["pct_intent"]+0.1,
+                r["activity"], fontsize=7)
 
-save_dir = Path("scatter_compare_outputs"); save_dir.mkdir(exist_ok=True)
-fname = save_dir / f"scatter_unknown_vs_{chosen.replace(' ','_')}.png"
-plt.savefig(fname, dpi=300)
-plt.show()
+axes[0].set_ylabel("% share in INTENT")
+for ax in axes:
+    ax.set_xlabel("% share in UNKNOWN")
+fig.tight_layout(rect=[0, 0, 1, 0.95])
 
-print("\n✓ Plot saved to", fname)
+out_dir = Path("scatter_compare_outputs"); out_dir.mkdir(exist_ok=True)
+out_path = out_dir / "top3_scatter_unknown_vs_intents.png"
+plt.savefig(out_path, dpi=300)
+plt.close()
+print("✓  plot saved to", out_path)

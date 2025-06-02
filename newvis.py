@@ -1,4 +1,33 @@
-    # ────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------
+#  ADD THIS BLOCK near the top of intent_explainability_data_only.py
+#  (right after the imports is fine)
+# ----------------------------------------------------------------------
+import traceback, logging
+from datetime import datetime
+
+def _safe(func):
+    """
+    Decorator: run the wrapped method, log any exception, and allow the
+    pipeline to continue instead of crashing.
+    """
+    def wrapper(self, *args, **kwargs):
+        try:
+            return func(self, *args, **kwargs)
+        except Exception as exc:
+            msg = f"{func.__name__} failed: {type(exc).__name__}: {exc}"
+            logging.warning(msg)
+            # Persist the full trace so you can inspect later
+            (self.output_dir / "log_errors.txt").parent.mkdir(exist_ok=True, parents=True)
+            with open(self.output_dir / "log_errors.txt", "a") as fh:
+                fh.write(f"\n[{datetime.now():%Y-%m-%d %H:%M:%S}] {msg}\n")
+                traceback.print_exc(file=fh)
+    return wrapper
+    
+        
+            
+                
+                    
+                            # ────────────────────────────────────────────────────────────────
     # 1️⃣  Utility inside the class (place near the top of the class)
     # ────────────────────────────────────────────────────────────────
     def _flatten_cols(self, df: pd.DataFrame) -> pd.DataFrame:

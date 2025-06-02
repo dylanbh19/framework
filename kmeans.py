@@ -1,183 +1,235 @@
+#!/usr/bin/env python
 """
-transferanalysis.py  –  sub-intent discovery inside “Transfer”
-* Tries KMeans k = 3, 4, 5  → keeps best silhouette
-* Sentence-BERT embeddings (all-MiniLM-L6-v2, CPU-friendly)
-* Outputs:
-    transfer_clusters.csv
-    cluster_scatter.png
-    cluster_feature_bars.png
-    cluster_top_features.csv
-    cluster_summary.json          << fixed JSON error
+transfer_subintent_analysis.py  –  v2  (no first/last_activity columns)
+
+Identify meaningful sub-clusters within the giant “Transfer” intent bucket.
+The script auto-detects your CSV, builds a composite feature space using
+*all* available columns except first/last_activity (they're not present),
+evaluates k-means with k={3,4}, keeps the one with the better silhouette
+score, trims outliers, then produces plots + a CSV you can re-merge later.
+
+Requires:  pip install pandas numpy scikit-learn sentence-transformers matplotlib seaborn
 """
 
-import argparse, json, logging, sys, warnings
-from collections import defaultdict
+from __future__ import annotations
+import json, logging, os, sys, re, warnings
 from datetime import datetime
 from pathlib import Path
+from typing import List, Tuple
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import seaborn as sns
-from sentence_transformers import SentenceTransformer
-from sklearn.cluster import KMeans
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
 from sklearn.decomposition import PCA
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics import silhouette_score
+from sklearn.cluster import KMeans
+import matplotlib.pyplot as plt
+import seaborn as sns
 
-warnings.filterwarnings("ignore")
-sns.set(style="whitegrid")
+try:
+    from sentence_transformers import SentenceTransformer
+    _SBERT_OK = True
+except ImportError:
+    _SBERT_OK = False
 
+warnings.filterwarnings('ignore')
+logging.basicConfig(
+    format='%(asctime)s %(levelname)s %(message)s',
+    datefmt='%H:%M:%S',
+    level=logging.INFO
+)
+log = logging.getLogger('transfer-subint')
 
-# --------------------------------------------------------------------------- #
-def setup_logging(outdir: Path):
-    (outdir / "logs").mkdir(parents=True, exist_ok=True)
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)7s | %(message)s",
-        handlers=[
-            logging.StreamHandler(sys.stdout),
-            logging.FileHandler(outdir / "logs" / "transfer_analysis.log",
-                                encoding="utf-8"),
-        ],
-    )
-
-
-def embed(text: pd.Series, model_name="all-MiniLM-L6-v2"):
-    model = SentenceTransformer(model_name)
-    logging.info("Sentence-BERT %s (device=%s)",
-                 model_name, model._target_device)
-    return model.encode(
-        text.tolist(),
-        batch_size=256,
-        show_progress_bar=True,
-        convert_to_numpy=True,
-        device="cpu",
-    )
-
-
-def pca95(x: np.ndarray):
-    pca = PCA(n_components=0.95, svd_solver="full", random_state=42)
-    red = pca.fit_transform(x)
-    var_pct = pca.explained_variance_ratio_.sum() * 100
-    logging.info("PCA kept %d comps – %.2f %% variance",
-                 red.shape[1], var_pct)
-    return red, var_pct
-
-
-def fit_kmeans(data: np.ndarray, k: int):
-    km = KMeans(n_clusters=k, random_state=42, n_init="auto")
-    labels = km.fit_predict(data)
-    sil = silhouette_score(data, labels)
-    logging.info("k = %-2d → silhouette = %.3f", k, sil)
-    return labels, sil
-
-
-def tfidf_top(text: pd.Series, labels, top_n=15):
-    vec = TfidfVectorizer(max_features=10_000, ngram_range=(1, 3),
-                          token_pattern=r"(?u)\b\w+\b")
-    tfidf = vec.fit_transform(text)
-    vocab = np.array(vec.get_feature_names_out())
-
-    tops, rows = {}, []
-    for c in np.unique(labels):
-        scores = np.asarray(tfidf[labels == c].mean(axis=0)).ravel()
-        idx = scores.argsort()[::-1][:top_n]
-        tops[int(c)] = list(zip(vocab[idx], (scores[idx]).round(3)))
-        rows.extend({"cluster": int(c), "term": t, "score": float(s)}
-                    for t, s in tops[int(c)])
-    return tops, pd.DataFrame(rows)
-
-
-def plot_scatter(pca2, labels, path):
-    plt.figure(figsize=(8, 7))
-    palette = sns.color_palette("husl", n_colors=len(np.unique(labels)))
-    for lab, col in zip(np.unique(labels), palette):
-        pts = pca2[labels == lab]
-        plt.scatter(pts[:, 0], pts[:, 1], s=6, c=[col], label=f"C{lab}")
-    plt.title("Sub-intent clusters (PCA dims 1–2)")
-    plt.legend(markerscale=2, frameon=False, ncol=len(np.unique(labels)))
-    plt.tight_layout()
-    plt.savefig(path, dpi=300)
-    plt.close()
-
-
-def plot_bars(tops, path):
-    n = len(tops)
-    fig, axes = plt.subplots(n, 1, figsize=(10, 2.2 * n), sharex=False)
-    if n == 1:
-        axes = [axes]
-    for ax, (cid, pairs) in zip(axes, tops.items()):
-        pairs = list(reversed(pairs))
-        ax.barh([t for t, _ in pairs], [s for _, s in pairs],
-                color="steelblue")
-        ax.set_title(f"Cluster {cid} – distinctive terms")
-    plt.tight_layout()
-    plt.savefig(path, dpi=300)
-    plt.close()
-
+OUTDIR = Path('transfer_subintent_results')
+OUTDIR.mkdir(exist_ok=True)
 
 # --------------------------------------------------------------------------- #
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--input",
-                    default="augmentation_results/best_augmented_data.csv")
-    ap.add_argument("--outdir", default="transfer_subintent_results")
-    args = ap.parse_args()
+# 1. Locate & load data                                                       #
+# --------------------------------------------------------------------------- #
+def _find_augmented_csv() -> Path:
+    here = Path.cwd()
+    for pat in ['augmentation_results*/best_augmented_data.csv',
+                '**/best_augmented_data.csv', 'best_augmented_data.csv']:
+        for p in here.glob(pat):
+            return p
+    raise FileNotFoundError("best_augmented_data.csv not found")
 
-    outdir = Path(args.outdir)
-    outdir.mkdir(parents=True, exist_ok=True)
-    setup_logging(outdir)
+CSV_PATH = _find_augmented_csv()
+log.info(f"Using data file: {CSV_PATH}")
+df = pd.read_csv(CSV_PATH, low_memory=False)
+log.info(f"Loaded {len(df):,} rows; "
+         f"{(df['intent_augmented']=='Transfer').sum():,} with intent=Transfer")
 
-    df = pd.read_csv(args.input, low_memory=False)
-    mask = df["intent_augmented"] == "Transfer"
-    df_t = df.loc[mask].reset_index(drop=True)
-    logging.info("Loaded %d rows, %d tagged as Transfer",
-                 len(df), len(df_t))
+df = df[df['intent_augmented'] == 'Transfer'].copy()
+df.reset_index(drop=True, inplace=True)
 
-    text = df_t["activity_sequence"].fillna(
-        df_t.get("first_activity", "")).astype(str)
+# --------------------------------------------------------------------------- #
+# 2. Feature engineering                                                      #
+# --------------------------------------------------------------------------- #
+# -- 2a  sentence embedding of full sequence -------------------------------- #
+if _SBERT_OK:
+    device = 'cpu'   # force CPU; avoids surprises on older machines
+    model_name = 'all-MiniLM-L6-v2'
+    log.info(f"Using Sentence-BERT embeddings model={model_name}.")
+    sbert = SentenceTransformer(model_name, device=device)
 
-    emb = embed(text)
-    red, var_pct = pca95(emb)
+    seq_text = df['activity_sequence'].fillna('').astype(str).tolist()
+    batches, emb_list = 0, []
+    BATCH = 512
+    for i in range(0, len(seq_text), BATCH):
+        emb = sbert.encode(seq_text[i:i+BATCH], show_progress_bar=False,
+                           normalize_embeddings=True)
+        emb_list.append(emb)
+        batches += 1
+    embed_matrix = np.vstack(emb_list)
+else:
+    log.warning("sentence-transformers not installed -- falling back to TF-IDF only")
+    embed_matrix = np.empty((len(df), 0), dtype='float32')
 
-    # ----- test k = 3, 4, 5 ---------------------------------------------------
-    results = {}
-    for k in (3, 4, 5):
-        labels, sil = fit_kmeans(red, k)
-        results[k] = {"labels": labels, "sil": sil}
+# -- 2b  TF-IDF bag of activities ------------------------------------------- #
+act_seqs = df['activity_sequence'].fillna('').str.replace('|', ' ')
+tfidf = TfidfVectorizer(ngram_range=(1,1), min_df=2, max_features=4000)
+tfidf_mat = tfidf.fit_transform(act_seqs).astype('float32')
 
-    best_k = max(results, key=lambda k: results[k]["sil"])
-    labels = results[best_k]["labels"]
-    df_t["sub_cluster"] = labels
-    logging.info("Selected k = %d (silhouette %.3f)",
-                 best_k, results[best_k]["sil"])
+# -- 2c  simple numeric features -------------------------------------------- #
+df['seq_length'] = df['activity_sequence'].fillna('').str.count(r'\|') + 1
+numeric = df[['seq_length']]
+if 'intent_confidence' in df.columns:
+    numeric['intent_confidence'] = df['intent_confidence'].fillna(0)
 
-    # top terms & visuals
-    tops, df_terms = tfidf_top(text, labels, top_n=15)
+num_mat = StandardScaler().fit_transform(numeric).astype('float32')
 
-    df_t.to_csv(outdir / "transfer_clusters.csv", index=False)
-    plot_scatter(red[:, :2], labels, outdir / "cluster_scatter.png")
-    plot_bars(tops, outdir / "cluster_feature_bars.png")
-    df_terms.to_csv(outdir / "cluster_top_features.csv", index=False)
+# -- 2d  categorical (auto detect low-cardinality non-numeric cols) ---------- #
+cat_cols = []
+for col in df.columns:
+    if col in ['activity_sequence', 'intent_augmented', 'intent_base']: continue
+    if df[col].dtype == object and df[col].nunique() <= 20:
+        cat_cols.append(col)
 
-    summary = {
-        "generated": datetime.now().isoformat(timespec="seconds"),
-        "total_rows": int(len(df)),
-        "transfer_rows": int(len(df_t)),
-        "pca_variance_pct": float(round(var_pct, 2)),
-        "silhouette": {int(k): float(round(v["sil"], 3))
-                       for k, v in results.items()},
-        "chosen_k": int(best_k),
-        "cluster_sizes": {int(k): int(v) for k, v
-                          in df_t["sub_cluster"].value_counts().items()},
-    }
-    with open(outdir / "cluster_summary.json", "w",
-              encoding="utf-8") as f:
-        json.dump(summary, f, indent=2)
+if cat_cols:
+    ohe = OneHotEncoder(handle_unknown='ignore', sparse=True)
+    cat_mat = ohe.fit_transform(df[cat_cols])
+else:
+    cat_mat = np.empty((len(df), 0))
 
-    logging.info("Outputs written to %s", outdir.absolute())
+# -- 2e  concatenate all                                                      #
+from scipy import sparse
+X_sparse = sparse.hstack([tfidf_mat, cat_mat], format='csr')
+X_dense  = np.hstack([embed_matrix, num_mat])
+
+from scipy.sparse import csr_matrix
+X_all = sparse.hstack([csr_matrix(X_dense), X_sparse], format='csr')
+log.info(f"Final feature matrix: {X_all.shape}")
+
+# --------------------------------------------------------------------------- #
+# 3. Dimensionality reduction (PCA for scatter + speed)                       #
+# --------------------------------------------------------------------------- #
+def _pca_reduce(mat, variance_keep=0.95, max_comps=50) -> Tuple[np.ndarray, PCA]:
+    pca = PCA(n_components=min(max_comps, mat.shape[1]), svd_solver='randomized')
+    reduced = pca.fit_transform(mat.toarray())
+    var_cum = pca.explained_variance_ratio_.cumsum()
+    k = np.searchsorted(var_cum, variance_keep) + 1
+    log.info(f"PCA kept {k} comps – {var_cum[k-1]*100:5.2f} % variance")
+    return reduced[:,:k], pca
+
+X_pca2d, _ = _pca_reduce(X_all, variance_keep=0.95)
+
+# outlier removal (3× MAD)
+med = np.median(X_pca2d, axis=0)
+mad = np.median(np.abs(X_pca2d - med), axis=0)
+mask = (np.abs(X_pca2d - med) < 3*mad).all(axis=1)
+X_pca = X_pca2d[mask]
+X_cluster = X_all[mask]
+df_clean = df.loc[mask].reset_index(drop=True)
+log.info(f"Trimmed {len(df)-len(df_clean):,} outliers")
+
+# --------------------------------------------------------------------------- #
+# 4. KMeans for k in {3,4,5}                                                  #
+# --------------------------------------------------------------------------- #
+best_k, best_score, best_labels = None, -1, None
+for k in (3,4,5):
+    km = KMeans(n_clusters=k, random_state=42, n_init='auto', max_iter=300)
+    labels = km.fit_predict(X_cluster)
+    score = silhouette_score(X_cluster, labels, sample_size=10000, random_state=42)
+    log.info(f"k = {k:>2} ▸ silhouette = {score:0.3f}")
+    if score > best_score:
+        best_k, best_score, best_labels = k, score, labels
+
+log.info(f"Selected k = {best_k} (silhouette {best_score:0.3f})")
+
+df_clean['subintent_id'] = best_labels
+
+# --------------------------------------------------------------------------- #
+# 5.  Plots                                                                   #
+# --------------------------------------------------------------------------- #
+palette = sns.color_palette('tab10', best_k)
+plt.figure(figsize=(6,6))
+for cl in range(best_k):
+    idx = df_clean['subintent_id'] == cl
+    plt.scatter(X_pca[idx,0], X_pca[idx,1], s=4, alpha=0.6,
+                label=f'C{cl}', color=palette[cl])
+plt.legend(markerscale=2, fontsize=8, title='cluster')
+plt.title('Sub-intent clusters (PCA dims 1-2)')
+plt.tight_layout()
+plt.savefig(OUTDIR/'cluster_scatter.png', dpi=300)
+plt.close()
+
+# ------------ distinguishing words per cluster (simple ΔTF-IDF) ------------ #
+from sklearn.feature_extraction.text import TfidfVectorizer
+texts = act_seqs[mask].tolist()
+tf_all = TfidfVectorizer(ngram_range=(1,1), min_df=5).fit(texts)
+M = tf_all.transform(texts)
+
+fig, axs = plt.subplots(best_k, 1, figsize=(5, 2*best_k))
+if best_k == 1: axs = [axs]
+feature_names = np.array(tf_all.get_feature_names_out())
+
+for cl in range(best_k):
+    row_bool = (df_clean['subintent_id']==cl).values
+    mean_tfidf = np.asarray(M[row_bool].mean(axis=0)).ravel()
+    top_idx = mean_tfidf.argsort()[::-1][:15]
+    sns.barplot(x=mean_tfidf[top_idx],
+                y=feature_names[top_idx],
+                ax=axs[cl], color=palette[cl])
+    axs[cl].set_title(f'Cluster {cl} – distinctive terms')
+    axs[cl].set_xlabel('')
+    axs[cl].set_ylabel('')
+plt.tight_layout()
+plt.savefig(OUTDIR/'cluster_feature_bars.png', dpi=300)
+plt.close()
+
+# cluster size histogram
+plt.figure(figsize=(5,3))
+sns.histplot(df_clean['subintent_id'].value_counts(), bins=best_k, discrete=True)
+plt.title('Cluster size distribution')
+plt.xlabel('size')
+plt.tight_layout()
+plt.savefig(OUTDIR/'cluster_size_hist.png', dpi=300)
+plt.close()
+
+# --------------------------------------------------------------------------- #
+# 6.  Save artefacts                                                          #
+# --------------------------------------------------------------------------- #
+(df_clean
+   .assign(original_index=df_clean.index)
+   .to_csv(OUTDIR/'transfer_clusters.csv', index=False))
+
+# JSON summary – convert float32 -> float to avoid serialisation errors
+summary = {
+    'generated_at'  : datetime.now().isoformat(timespec='seconds'),
+    'best_k'        : int(best_k),
+    'silhouette'    : float(best_score),
+    'cluster_sizes' : df_clean['subintent_id'].value_counts().to_dict(),
+    'feature_counts': int(X_all.shape[1])
+}
+with open(OUTDIR/'clustering_summary.json', 'w') as f:
+    json.dump(summary, f, indent=2)
+
+log.info('✔ All artefacts written to %s', OUTDIR.resolve())
+# --------------------------------------------------------------------------- #
 
 
-if __name__ == "__main__":
-    main()
+if __name__ == '__main__':
+    # nothing special to do; importing this file runs everything.
+    pass

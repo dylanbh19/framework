@@ -1,14 +1,14 @@
 """
-intent_explainability.py - Comprehensive Explainability Framework
-================================================================
-Production-ready explainability analysis for intent augmentation models.
-Generates detailed reports, visualizations, and explanations for stakeholders.
+intent_explainability_data_only.py - Explainability Without Model Files
+======================================================================
+Comprehensive explainability analysis using only the augmented data CSV.
+No model files or retraining required.
 
 Requirements:
-pip install pandas numpy matplotlib seaborn plotly scikit-learn shap lime wordcloud
+pip install pandas numpy matplotlib seaborn plotly wordcloud scikit-learn
 
 Usage:
-python intent_explainability.py --input augmentation_results_pro/best_augmented_data.csv
+python intent_explainability_data_only.py --input augmentation_results_pro/best_augmented_data.csv
 """
 
 import warnings
@@ -34,21 +34,7 @@ from wordcloud import WordCloud
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
-from sklearn.metrics import confusion_matrix, classification_report
 from sklearn.preprocessing import StandardScaler
-
-# Optional but recommended for advanced explainability
-try:
-    import shap
-    HAS_SHAP = True
-except ImportError:
-    HAS_SHAP = False
-    
-try:
-    from lime.lime_text import LimeTextExplainer
-    HAS_LIME = True
-except ImportError:
-    HAS_LIME = False
 
 # Configure logging
 logging.basicConfig(
@@ -63,10 +49,10 @@ sns.set_palette("husl")
 plt.style.use('seaborn-v0_8-whitegrid')
 
 
-class IntentExplainabilityAnalyzer:
+class DataOnlyExplainabilityAnalyzer:
     """
-    Comprehensive explainability analyzer for intent augmentation results.
-    Generates multiple types of explanations, visualizations, and reports.
+    Explainability analyzer that works purely with output data.
+    No model files required - analyzes patterns directly from results.
     """
     
     def __init__(self, data_path: str, output_dir: str = "explainability_results"):
@@ -82,268 +68,456 @@ class IntentExplainabilityAnalyzer:
         self.df = pd.read_csv(self.data_path, low_memory=False)
         self.original_size = len(self.df)
         
+        # Check for comparison results CSV if available
+        comparison_path = self.data_path.parent / 'method_comparison.csv'
+        if comparison_path.exists():
+            self.comparison_df = pd.read_csv(comparison_path, index_col=0)
+            log.info("Found method comparison data")
+        else:
+            self.comparison_df = None
+            
         # Initialize results storage
         self.explanations = {}
         self.metrics = {}
         self.visualizations = []
         
     def run_full_analysis(self):
-        """Run complete explainability analysis pipeline."""
-        log.info("Starting comprehensive explainability analysis...")
+        """Run complete explainability analysis using only data."""
+        log.info("Starting data-based explainability analysis...")
         
-        # 1. Data quality and coverage analysis
-        self.analyze_data_quality()
+        # 1. Data overview and quality
+        self.analyze_data_overview()
         
-        # 2. Intent distribution analysis
-        self.analyze_intent_distributions()
+        # 2. Intent patterns from results
+        self.analyze_intent_patterns()
         
-        # 3. Confidence analysis
-        self.analyze_confidence_scores()
+        # 3. Confidence-based analysis
+        self.analyze_confidence_patterns()
         
-        # 4. Feature importance analysis
-        self.analyze_feature_importance()
+        # 4. Activity sequence patterns
+        self.analyze_activity_patterns()
         
-        # 5. Error analysis
-        self.analyze_errors_and_edge_cases()
+        # 5. Rule-based pattern discovery
+        self.discover_decision_rules()
         
-        # 6. Model behavior patterns
-        self.analyze_model_patterns()
+        # 6. Error and edge case analysis
+        self.analyze_edge_cases()
         
-        # 7. Activity sequence analysis
-        self.analyze_activity_sequences()
+        # 7. Method comparison (if available)
+        self.analyze_method_performance()
         
-        # 8. Generate individual case explanations
-        self.generate_case_explanations()
+        # 8. Generate case-by-case explanations
+        self.generate_data_driven_explanations()
         
-        # 9. Create interactive dashboards
-        self.create_interactive_dashboards()
+        # 9. Create visualizations
+        self.create_comprehensive_visualizations()
         
-        # 10. Generate comprehensive report
-        self.generate_executive_report()
+        # 10. Generate reports
+        self.generate_reports()
         
         log.info(f"Analysis complete! Results saved to {self.output_dir}")
         
-    def analyze_data_quality(self):
-        """Analyze data quality and augmentation coverage."""
-        log.info("Analyzing data quality and coverage...")
+    def analyze_data_overview(self):
+        """Analyze basic data statistics and quality."""
+        log.info("Analyzing data overview...")
         
-        quality_metrics = {
+        overview = {
             'total_records': len(self.df),
-            'original_intents': (self.df.get('intent_base', pd.Series()) != 'Unknown').sum(),
-            'augmented_intents': (self.df.get('intent_augmented', pd.Series()) != 'Unknown').sum(),
-            'improvement_rate': 0,
-            'confidence_stats': {},
-            'missing_data_analysis': {}
+            'columns': list(self.df.columns),
+            'data_types': self.df.dtypes.astype(str).to_dict()
         }
         
-        # Calculate improvement
-        if 'intent_base' in self.df.columns:
-            orig_unknown = (self.df['intent_base'] == 'Unknown').sum()
-            aug_unknown = (self.df['intent_augmented'] == 'Unknown').sum()
-            quality_metrics['improvement_rate'] = (orig_unknown - aug_unknown) / orig_unknown if orig_unknown > 0 else 0
+        # Intent coverage analysis
+        if 'intent_augmented' in self.df.columns:
+            overview['intent_coverage'] = {
+                'unique_intents': self.df['intent_augmented'].nunique(),
+                'unknown_count': (self.df['intent_augmented'] == 'Unknown').sum(),
+                'unknown_rate': (self.df['intent_augmented'] == 'Unknown').mean(),
+                'most_common': self.df['intent_augmented'].value_counts().head(5).to_dict()
+            }
         
-        # Confidence statistics
-        if 'intent_confidence' in self.df.columns:
-            quality_metrics['confidence_stats'] = {
+        # Original vs augmented comparison
+        if 'intent_base' in self.df.columns and 'intent_augmented' in self.df.columns:
+            overview['improvement'] = {
+                'original_unknown': (self.df['intent_base'] == 'Unknown').sum(),
+                'augmented_unknown': (self.df['intent_augmented'] == 'Unknown').sum(),
+                'records_improved': ((self.df['intent_base'] == 'Unknown') & 
+                                   (self.df['intent_augmented'] != 'Unknown')).sum(),
+                'improvement_rate': 0
+            }
+            if overview['improvement']['original_unknown'] > 0:
+                overview['improvement']['improvement_rate'] = (
+                    overview['improvement']['records_improved'] / 
+                    overview['improvement']['original_unknown']
+                )
+        
+        # Data completeness
+        overview['completeness'] = {}
+        for col in ['activity_sequence', 'first_activity', 'last_activity', 'intent_confidence']:
+            if col in self.df.columns:
+                overview['completeness'][col] = {
+                    'non_null_count': self.df[col].notna().sum(),
+                    'completeness_rate': self.df[col].notna().mean()
+                }
+        
+        self.metrics['overview'] = overview
+        self._visualize_overview()
+        
+    def analyze_intent_patterns(self):
+        """Analyze patterns in intent predictions."""
+        log.info("Analyzing intent patterns...")
+        
+        if 'intent_augmented' not in self.df.columns:
+            log.warning("No intent_augmented column found")
+            return
+            
+        patterns = {
+            'distribution': self.df['intent_augmented'].value_counts().to_dict(),
+            'proportions': self.df['intent_augmented'].value_counts(normalize=True).to_dict()
+        }
+        
+        # Transition analysis if we have before/after
+        if 'intent_base' in self.df.columns:
+            transitions = pd.crosstab(
+                self.df['intent_base'], 
+                self.df['intent_augmented']
+            )
+            patterns['transitions'] = {
+                'matrix': transitions.to_dict(),
+                'major_changes': self._find_major_transitions(transitions)
+            }
+        
+        # Intent by method if available
+        if 'aug_method' in self.df.columns:
+            patterns['by_method'] = {}
+            for method in self.df['aug_method'].unique():
+                method_df = self.df[self.df['aug_method'] == method]
+                patterns['by_method'][method] = {
+                    'count': len(method_df),
+                    'top_intents': method_df['intent_augmented'].value_counts().head(5).to_dict()
+                }
+        
+        self.metrics['intent_patterns'] = patterns
+        self._visualize_intent_patterns()
+        
+    def analyze_confidence_patterns(self):
+        """Analyze confidence score patterns."""
+        log.info("Analyzing confidence patterns...")
+        
+        if 'intent_confidence' not in self.df.columns:
+            log.warning("No confidence scores found")
+            return
+            
+        confidence_analysis = {
+            'overall_stats': {
                 'mean': self.df['intent_confidence'].mean(),
                 'median': self.df['intent_confidence'].median(),
                 'std': self.df['intent_confidence'].std(),
-                'quartiles': self.df['intent_confidence'].quantile([0.25, 0.5, 0.75]).to_dict()
+                'min': self.df['intent_confidence'].min(),
+                'max': self.df['intent_confidence'].max()
+            },
+            'distribution': {
+                'very_low': (self.df['intent_confidence'] < 0.5).sum(),
+                'low': ((self.df['intent_confidence'] >= 0.5) & 
+                       (self.df['intent_confidence'] < 0.7)).sum(),
+                'medium': ((self.df['intent_confidence'] >= 0.7) & 
+                          (self.df['intent_confidence'] < 0.85)).sum(),
+                'high': ((self.df['intent_confidence'] >= 0.85) & 
+                        (self.df['intent_confidence'] < 0.95)).sum(),
+                'very_high': (self.df['intent_confidence'] >= 0.95).sum()
             }
+        }
         
-        # Missing data analysis
-        for col in ['activity_sequence', 'first_activity', 'last_activity']:
-            if col in self.df.columns:
-                quality_metrics['missing_data_analysis'][col] = {
-                    'missing_count': self.df[col].isna().sum(),
-                    'missing_percentage': (self.df[col].isna().sum() / len(self.df)) * 100
-                }
-        
-        self.metrics['data_quality'] = quality_metrics
-        
-        # Visualization
-        self._plot_data_quality_dashboard()
-        
-    def analyze_intent_distributions(self):
-        """Analyze intent distribution patterns."""
-        log.info("Analyzing intent distributions...")
-        
-        # Intent frequency analysis
-        intent_counts = self.df['intent_augmented'].value_counts()
-        
-        # Before/after comparison if available
-        if 'intent_base' in self.df.columns:
-            before_after = pd.DataFrame({
-                'Before': self.df['intent_base'].value_counts(),
-                'After': self.df['intent_augmented'].value_counts()
-            }).fillna(0)
-            
-            # Calculate changes
-            before_after['Change'] = before_after['After'] - before_after['Before']
-            before_after['Change_Pct'] = (before_after['Change'] / before_after['Before'] * 100).round(2)
-            
-            self.metrics['intent_distribution'] = {
-                'before_after': before_after.to_dict(),
-                'top_intents': intent_counts.head(10).to_dict(),
-                'rare_intents': intent_counts.tail(10).to_dict()
-            }
-        
-        # Visualizations
-        self._plot_intent_distributions(intent_counts, before_after if 'intent_base' in self.df.columns else None)
-        
-    def analyze_confidence_scores(self):
-        """Analyze model confidence patterns."""
-        log.info("Analyzing confidence scores...")
-        
-        if 'intent_confidence' not in self.df.columns:
-            log.warning("No confidence scores found in data")
-            return
-            
         # Confidence by intent
         conf_by_intent = self.df.groupby('intent_augmented')['intent_confidence'].agg([
             'mean', 'median', 'std', 'min', 'max', 'count'
         ]).round(3)
+        confidence_analysis['by_intent'] = conf_by_intent.to_dict()
         
-        # Confidence distribution analysis
-        confidence_bins = pd.cut(self.df['intent_confidence'], 
-                                bins=[0, 0.5, 0.7, 0.85, 0.95, 1.0],
-                                labels=['Very Low', 'Low', 'Medium', 'High', 'Very High'])
-        
-        self.metrics['confidence_analysis'] = {
-            'by_intent': conf_by_intent.to_dict(),
-            'distribution': confidence_bins.value_counts().to_dict(),
-            'low_confidence_cases': len(self.df[self.df['intent_confidence'] < 0.7]),
-            'high_confidence_cases': len(self.df[self.df['intent_confidence'] >= 0.85])
+        # Find low/high confidence intents
+        confidence_analysis['insights'] = {
+            'high_confidence_intents': conf_by_intent[conf_by_intent['mean'] > 0.85].index.tolist(),
+            'low_confidence_intents': conf_by_intent[conf_by_intent['mean'] < 0.7].index.tolist(),
+            'most_variable_intents': conf_by_intent.nlargest(5, 'std').index.tolist()
         }
         
-        # Visualizations
-        self._plot_confidence_analysis(conf_by_intent, confidence_bins)
+        self.metrics['confidence'] = confidence_analysis
+        self._visualize_confidence_patterns()
         
-    def analyze_feature_importance(self):
-        """Analyze which features drive intent predictions."""
-        log.info("Analyzing feature importance...")
-        
-        # Activity sequence analysis
-        if 'activity_sequence' in self.df.columns:
-            # Extract activity patterns
-            activity_patterns = defaultdict(list)
-            
-            for idx, row in self.df.iterrows():
-                if pd.notna(row.get('activity_sequence')):
-                    activities = str(row['activity_sequence']).split('|')
-                    intent = row['intent_augmented']
-                    activity_patterns[intent].extend(activities)
-            
-            # Find most common activities per intent
-            intent_signatures = {}
-            for intent, activities in activity_patterns.items():
-                activity_counts = Counter(activities)
-                intent_signatures[intent] = {
-                    'top_activities': dict(activity_counts.most_common(10)),
-                    'unique_activities': len(set(activities)),
-                    'total_activities': len(activities)
-                }
-            
-            self.metrics['feature_importance'] = {
-                'intent_signatures': intent_signatures,
-                'distinctive_patterns': self._find_distinctive_patterns(activity_patterns)
-            }
-        
-        # TF-IDF analysis for text features
-        self._analyze_text_features()
-        
-        # Visualizations
-        self._plot_feature_importance()
-        
-    def analyze_errors_and_edge_cases(self):
-        """Identify and analyze potential errors and edge cases."""
-        log.info("Analyzing errors and edge cases...")
-        
-        edge_cases = {
-            'low_confidence': self.df[self.df.get('intent_confidence', 1) < 0.5] if 'intent_confidence' in self.df.columns else pd.DataFrame(),
-            'unknown_results': self.df[self.df['intent_augmented'] == 'Unknown'],
-            'short_sequences': pd.DataFrame(),
-            'conflicting_patterns': pd.DataFrame()
-        }
-        
-        # Short activity sequences
-        if 'activity_sequence' in self.df.columns:
-            seq_lengths = self.df['activity_sequence'].fillna('').str.split('|').str.len()
-            edge_cases['short_sequences'] = self.df[seq_lengths <= 1]
-        
-        # Analyze edge case patterns
-        edge_case_analysis = {}
-        for case_type, case_df in edge_cases.items():
-            if not case_df.empty and len(case_df) > 0:
-                edge_case_analysis[case_type] = {
-                    'count': len(case_df),
-                    'percentage': (len(case_df) / len(self.df)) * 100,
-                    'common_patterns': self._analyze_edge_case_patterns(case_df)
-                }
-        
-        self.metrics['edge_cases'] = edge_case_analysis
-        
-        # Generate edge case report
-        self._generate_edge_case_report(edge_cases)
-        
-    def analyze_model_patterns(self):
-        """Analyze model behavior patterns and decision boundaries."""
-        log.info("Analyzing model behavior patterns...")
-        
-        # Pattern analysis
-        patterns = {
-            'intent_transitions': self._analyze_intent_transitions(),
-            'confidence_patterns': self._analyze_confidence_patterns(),
-            'activity_intent_correlation': self._analyze_activity_intent_correlation()
-        }
-        
-        self.metrics['model_patterns'] = patterns
-        
-        # Visualizations
-        self._plot_model_patterns(patterns)
-        
-    def analyze_activity_sequences(self):
-        """Deep dive into activity sequence patterns."""
-        log.info("Analyzing activity sequences...")
+    def analyze_activity_patterns(self):
+        """Analyze activity sequence patterns."""
+        log.info("Analyzing activity patterns...")
         
         if 'activity_sequence' not in self.df.columns:
             log.warning("No activity sequences found")
             return
             
-        # Sequence length analysis
+        # Basic sequence statistics
         self.df['seq_length'] = self.df['activity_sequence'].fillna('').str.split('|').str.len()
         
-        # N-gram analysis
-        ngram_analysis = self._analyze_ngrams()
-        
-        # Sequential pattern mining
-        sequential_patterns = self._mine_sequential_patterns()
-        
-        self.metrics['sequence_analysis'] = {
-            'length_stats': self.df['seq_length'].describe().to_dict(),
-            'ngrams': ngram_analysis,
-            'sequential_patterns': sequential_patterns
+        activity_analysis = {
+            'sequence_stats': {
+                'mean_length': self.df['seq_length'].mean(),
+                'median_length': self.df['seq_length'].median(),
+                'max_length': self.df['seq_length'].max(),
+                'empty_sequences': (self.df['seq_length'] == 0).sum()
+            }
         }
         
-        # Visualizations
-        self._plot_sequence_analysis()
+        # Activity frequency analysis
+        all_activities = []
+        for seq in self.df['activity_sequence'].fillna(''):
+            if seq:
+                all_activities.extend(seq.split('|'))
         
-    def generate_case_explanations(self, sample_size: int = 100):
-        """Generate detailed explanations for individual cases."""
-        log.info(f"Generating explanations for {sample_size} sample cases...")
+        activity_counts = Counter(all_activities)
+        activity_analysis['top_activities'] = dict(activity_counts.most_common(20))
+        activity_analysis['unique_activities'] = len(activity_counts)
         
-        # Sample cases across different confidence levels
+        # Intent-specific activity patterns
+        intent_activities = {}
+        for intent in self.df['intent_augmented'].value_counts().head(10).index:
+            intent_df = self.df[self.df['intent_augmented'] == intent]
+            intent_acts = []
+            for seq in intent_df['activity_sequence'].fillna(''):
+                if seq:
+                    intent_acts.extend(seq.split('|'))
+            
+            if intent_acts:
+                intent_activity_counts = Counter(intent_acts)
+                intent_activities[intent] = {
+                    'top_activities': dict(intent_activity_counts.most_common(10)),
+                    'unique_count': len(intent_activity_counts),
+                    'total_activities': len(intent_acts)
+                }
+        
+        activity_analysis['by_intent'] = intent_activities
+        
+        # N-gram patterns
+        activity_analysis['ngrams'] = self._extract_ngrams()
+        
+        self.metrics['activities'] = activity_analysis
+        self._visualize_activity_patterns()
+        
+    def discover_decision_rules(self):
+        """Discover apparent decision rules from the data."""
+        log.info("Discovering decision rules from patterns...")
+        
+        rules = {'discovered_rules': [], 'pattern_statistics': {}}
+        
+        if 'activity_sequence' not in self.df.columns or 'intent_augmented' not in self.df.columns:
+            log.warning("Cannot discover rules without activity sequences and intents")
+            return
+            
+        # Find strong activity-intent associations
+        for intent in self.df['intent_augmented'].value_counts().head(15).index:
+            if intent == 'Unknown':
+                continue
+                
+            intent_df = self.df[self.df['intent_augmented'] == intent]
+            other_df = self.df[self.df['intent_augmented'] != intent]
+            
+            # Find activities that appear frequently for this intent
+            intent_activities = []
+            for seq in intent_df['activity_sequence'].fillna(''):
+                if seq:
+                    intent_activities.extend(seq.split('|'))
+            
+            other_activities = []
+            for seq in other_df['activity_sequence'].fillna(''):
+                if seq:
+                    other_activities.extend(seq.split('|'))
+            
+            intent_act_freq = Counter(intent_activities)
+            other_act_freq = Counter(other_activities)
+            
+            # Calculate distinctiveness scores
+            for activity, count in intent_act_freq.most_common(20):
+                intent_rate = count / len(intent_df) if len(intent_df) > 0 else 0
+                other_rate = other_act_freq.get(activity, 0) / len(other_df) if len(other_df) > 0 else 0
+                
+                if intent_rate > 0.3 and intent_rate > other_rate * 2:
+                    rules['discovered_rules'].append({
+                        'rule': f"IF activity_sequence CONTAINS '{activity}' THEN intent = '{intent}'",
+                        'confidence': intent_rate,
+                        'support': count,
+                        'lift': intent_rate / (other_rate + 0.001)
+                    })
+            
+            # Look for activity combinations
+            if 'intent_confidence' in self.df.columns:
+                high_conf_intent = intent_df[intent_df['intent_confidence'] > 0.9]
+                if len(high_conf_intent) > 10:
+                    # Find common patterns in high confidence predictions
+                    common_patterns = self._find_common_subsequences(
+                        high_conf_intent['activity_sequence'].fillna('').tolist()
+                    )
+                    for pattern, freq in common_patterns[:3]:
+                        if freq > 0.5:
+                            rules['discovered_rules'].append({
+                                'rule': f"IF activity_sequence CONTAINS pattern '{' -> '.join(pattern)}' THEN intent = '{intent}'",
+                                'confidence': freq,
+                                'support': int(freq * len(high_conf_intent)),
+                                'pattern_type': 'sequence'
+                            })
+        
+        # Sort rules by confidence
+        rules['discovered_rules'] = sorted(
+            rules['discovered_rules'], 
+            key=lambda x: x['confidence'], 
+            reverse=True
+        )[:50]
+        
+        # Pattern statistics
+        rules['pattern_statistics'] = {
+            'total_rules_discovered': len(rules['discovered_rules']),
+            'high_confidence_rules': sum(1 for r in rules['discovered_rules'] if r['confidence'] > 0.8),
+            'sequence_patterns': sum(1 for r in rules['discovered_rules'] if r.get('pattern_type') == 'sequence')
+        }
+        
+        self.metrics['rules'] = rules
+        self._save_rules_report(rules)
+        
+    def analyze_edge_cases(self):
+        """Analyze edge cases and potential errors."""
+        log.info("Analyzing edge cases...")
+        
+        edge_cases = {
+            'categories': {},
+            'statistics': {},
+            'samples': {}
+        }
+        
+        # 1. Low confidence predictions
         if 'intent_confidence' in self.df.columns:
-            samples = pd.concat([
-                self.df[self.df['intent_confidence'] < 0.5].sample(min(20, len(self.df[self.df['intent_confidence'] < 0.5]))),
-                self.df[(self.df['intent_confidence'] >= 0.5) & (self.df['intent_confidence'] < 0.8)].sample(min(40, len(self.df[(self.df['intent_confidence'] >= 0.5) & (self.df['intent_confidence'] < 0.8)]))),
-                self.df[self.df['intent_confidence'] >= 0.8].sample(min(40, len(self.df[self.df['intent_confidence'] >= 0.8])))
-            ])
+            low_conf = self.df[self.df['intent_confidence'] < 0.5]
+            edge_cases['categories']['low_confidence'] = {
+                'count': len(low_conf),
+                'percentage': len(low_conf) / len(self.df) * 100,
+                'intent_distribution': low_conf['intent_augmented'].value_counts().to_dict() if 'intent_augmented' in low_conf.columns else {}
+            }
+            if len(low_conf) > 0:
+                edge_cases['samples']['low_confidence'] = low_conf.head(10).to_dict('records')
+        
+        # 2. Unknown predictions
+        if 'intent_augmented' in self.df.columns:
+            unknown = self.df[self.df['intent_augmented'] == 'Unknown']
+            edge_cases['categories']['unknown_predictions'] = {
+                'count': len(unknown),
+                'percentage': len(unknown) / len(self.df) * 100
+            }
+            if len(unknown) > 0 and 'activity_sequence' in unknown.columns:
+                # Analyze what's common in unknown predictions
+                unknown_activities = []
+                for seq in unknown['activity_sequence'].fillna(''):
+                    if seq:
+                        unknown_activities.extend(seq.split('|'))
+                edge_cases['categories']['unknown_predictions']['common_activities'] = dict(
+                    Counter(unknown_activities).most_common(10)
+                )
+        
+        # 3. Very short sequences
+        if 'activity_sequence' in self.df.columns:
+            self.df['_temp_seq_len'] = self.df['activity_sequence'].fillna('').str.split('|').str.len()
+            short_seq = self.df[self.df['_temp_seq_len'] <= 1]
+            edge_cases['categories']['short_sequences'] = {
+                'count': len(short_seq),
+                'percentage': len(short_seq) / len(self.df) * 100,
+                'avg_confidence': short_seq['intent_confidence'].mean() if 'intent_confidence' in short_seq.columns else None
+            }
+            self.df.drop('_temp_seq_len', axis=1, inplace=True)
+        
+        # 4. Conflicting patterns (if we have base intents)
+        if 'intent_base' in self.df.columns and 'intent_augmented' in self.df.columns:
+            conflicts = self.df[
+                (self.df['intent_base'] != 'Unknown') & 
+                (self.df['intent_augmented'] != 'Unknown') &
+                (self.df['intent_base'] != self.df['intent_augmented'])
+            ]
+            edge_cases['categories']['conflicting_predictions'] = {
+                'count': len(conflicts),
+                'percentage': len(conflicts) / len(self.df) * 100,
+                'conflict_pairs': pd.crosstab(
+                    conflicts['intent_base'], 
+                    conflicts['intent_augmented']
+                ).to_dict() if len(conflicts) > 0 else {}
+            }
+        
+        # Overall statistics
+        total_edge_cases = sum(
+            cat['count'] for cat in edge_cases['categories'].values()
+        )
+        edge_cases['statistics'] = {
+            'total_edge_cases': total_edge_cases,
+            'edge_case_rate': total_edge_cases / len(self.df) * 100,
+            'categories_analyzed': len(edge_cases['categories'])
+        }
+        
+        self.metrics['edge_cases'] = edge_cases
+        self._visualize_edge_cases()
+        
+    def analyze_method_performance(self):
+        """Analyze performance across different methods if available."""
+        log.info("Analyzing method performance...")
+        
+        method_analysis = {}
+        
+        # From augmented data
+        if 'aug_method' in self.df.columns:
+            method_stats = self.df.groupby('aug_method').agg({
+                'intent_augmented': lambda x: (x != 'Unknown').sum(),
+                'intent_confidence': ['mean', 'std', 'min', 'max'] if 'intent_confidence' in self.df.columns else []
+            })
+            
+            method_analysis['from_data'] = {
+                'usage_counts': self.df['aug_method'].value_counts().to_dict(),
+                'statistics': method_stats.to_dict() if not method_stats.empty else {}
+            }
+        
+        # From comparison file if available
+        if self.comparison_df is not None:
+            method_analysis['from_comparison'] = {
+                'unknown_rates': self.comparison_df['unknown_rate'].to_dict() if 'unknown_rate' in self.comparison_df.columns else {},
+                'improvements': self.comparison_df['improved'].to_dict() if 'improved' in self.comparison_df.columns else {},
+                'processing_times': self.comparison_df['time_s'].to_dict() if 'time_s' in self.comparison_df.columns else {}
+            }
+        
+        self.metrics['methods'] = method_analysis
+        self._visualize_method_performance()
+        
+    def generate_data_driven_explanations(self):
+        """Generate explanations based on data patterns."""
+        log.info("Generating data-driven explanations...")
+        
+        # Sample diverse cases
+        samples = []
+        
+        # High confidence cases
+        if 'intent_confidence' in self.df.columns:
+            high_conf = self.df[self.df['intent_confidence'] > 0.9].sample(
+                min(30, len(self.df[self.df['intent_confidence'] > 0.9]))
+            )
+            samples.extend(high_conf.index)
+            
+            # Low confidence cases
+            low_conf = self.df[self.df['intent_confidence'] < 0.6].sample(
+                min(30, len(self.df[self.df['intent_confidence'] < 0.6]))
+            )
+            samples.extend(low_conf.index)
+            
+            # Medium confidence
+            med_conf = self.df[
+                (self.df['intent_confidence'] >= 0.6) & 
+                (self.df['intent_confidence'] <= 0.9)
+            ].sample(min(40, len(self.df[(self.df['intent_confidence'] >= 0.6) & (self.df['intent_confidence'] <= 0.9)])))
+            samples.extend(med_conf.index)
         else:
-            samples = self.df.sample(min(sample_size, len(self.df)))
+            # Random sample if no confidence
+            samples = self.df.sample(min(100, len(self.df))).index
         
         explanations = []
-        for idx, row in samples.iterrows():
+        for idx in samples:
+            row = self.df.loc[idx]
             explanation = self._generate_single_explanation(row)
             explanations.append(explanation)
         
@@ -355,533 +529,123 @@ class IntentExplainabilityAnalyzer:
         
         self.explanations['sample_cases'] = explanations
         
-    def create_interactive_dashboards(self):
-        """Create interactive Plotly dashboards."""
-        log.info("Creating interactive dashboards...")
+    def create_comprehensive_visualizations(self):
+        """Create all visualizations."""
+        log.info("Creating comprehensive visualizations...")
         
-        # 1. Overview Dashboard
+        # Create interactive dashboards
         self._create_overview_dashboard()
+        self._create_intent_explorer()
+        self._create_confidence_analyzer()
+        self._create_pattern_viewer()
         
-        # 2. Intent Deep Dive Dashboard
-        self._create_intent_dashboard()
+    def generate_reports(self):
+        """Generate final reports."""
+        log.info("Generating reports...")
         
-        # 3. Confidence Analysis Dashboard
-        self._create_confidence_dashboard()
+        # Generate executive summary
+        summary = self._generate_executive_summary()
         
-        # 4. Pattern Explorer
-        self._create_pattern_explorer()
+        # Generate detailed findings
+        findings = self._generate_key_findings()
         
-    def generate_executive_report(self):
-        """Generate comprehensive executive report."""
-        log.info("Generating executive report...")
+        # Generate recommendations
+        recommendations = self._generate_recommendations()
         
+        # Create report structure
         report = {
             'generated_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            'summary': self._generate_executive_summary(),
-            'key_findings': self._generate_key_findings(),
-            'recommendations': self._generate_recommendations(),
-            'technical_details': self.metrics,
-            'visualizations': [str(f) for f in self.visualizations]
+            'data_source': str(self.data_path),
+            'summary': summary,
+            'key_findings': findings,
+            'recommendations': recommendations,
+            'metrics': self.metrics,
+            'visualizations': self.visualizations
         }
         
         # Save JSON report
-        with open(self.output_dir / 'reports' / 'executive_report.json', 'w') as f:
+        with open(self.output_dir / 'reports' / 'explainability_report.json', 'w') as f:
             json.dump(report, f, indent=2, default=str)
         
         # Generate HTML report
         self._generate_html_report(report)
         
-        # Generate PDF-ready markdown
+        # Generate markdown report
         self._generate_markdown_report(report)
         
     # ========== Helper Methods ==========
     
-    def _plot_data_quality_dashboard(self):
-        """Create data quality visualization dashboard."""
+    def _visualize_overview(self):
+        """Create overview visualizations."""
         fig, axes = plt.subplots(2, 2, figsize=(15, 10))
-        fig.suptitle('Data Quality and Coverage Analysis', fontsize=16)
+        fig.suptitle('Data Overview and Quality Analysis', fontsize=16)
         
-        # 1. Coverage improvement
-        if 'intent_base' in self.df.columns:
-            coverage_data = pd.DataFrame({
-                'Before': [
-                    (self.df['intent_base'] != 'Unknown').sum(),
-                    (self.df['intent_base'] == 'Unknown').sum()
-                ],
-                'After': [
-                    (self.df['intent_augmented'] != 'Unknown').sum(),
-                    (self.df['intent_augmented'] == 'Unknown').sum()
-                ]
-            }, index=['Known', 'Unknown'])
-            
-            coverage_data.plot(kind='bar', ax=axes[0, 0])
-            axes[0, 0].set_title('Intent Coverage: Before vs After')
-            axes[0, 0].set_ylabel('Number of Records')
-            axes[0, 0].tick_params(axis='x', rotation=0)
-        
-        # 2. Confidence distribution
-        if 'intent_confidence' in self.df.columns:
-            self.df['intent_confidence'].hist(bins=50, ax=axes[0, 1], edgecolor='black')
-            axes[0, 1].set_title('Confidence Score Distribution')
-            axes[0, 1].set_xlabel('Confidence Score')
-            axes[0, 1].set_ylabel('Frequency')
-            axes[0, 1].axvline(self.df['intent_confidence'].mean(), color='red', 
-                              linestyle='--', label=f'Mean: {self.df["intent_confidence"].mean():.3f}')
-            axes[0, 1].legend()
-        
-        # 3. Missing data analysis
-        missing_data = []
-        for col in ['activity_sequence', 'first_activity', 'last_activity']:
-            if col in self.df.columns:
-                missing_data.append({
-                    'Column': col,
-                    'Missing %': (self.df[col].isna().sum() / len(self.df)) * 100
-                })
-        
-        if missing_data:
-            missing_df = pd.DataFrame(missing_data)
-            missing_df.plot(x='Column', y='Missing %', kind='bar', ax=axes[1, 0], legend=False)
-            axes[1, 0].set_title('Missing Data by Column')
-            axes[1, 0].set_ylabel('Missing Percentage')
-            axes[1, 0].tick_params(axis='x', rotation=45)
-        
-        # 4. Augmentation method distribution
-        if 'aug_method' in self.df.columns:
-            method_counts = self.df['aug_method'].value_counts()
-            method_counts.plot(kind='pie', ax=axes[1, 1], autopct='%1.1f%%')
-            axes[1, 1].set_title('Augmentation Methods Used')
-            axes[1, 1].set_ylabel('')
-        
-        plt.tight_layout()
-        plt.savefig(self.output_dir / 'plots' / 'data_quality_dashboard.png', dpi=300, bbox_inches='tight')
-        plt.close()
-        
-        self.visualizations.append('data_quality_dashboard.png')
-        
-    def _plot_intent_distributions(self, intent_counts, before_after_df):
-        """Create intent distribution visualizations."""
-        # 1. Top intents bar chart
-        plt.figure(figsize=(12, 6))
-        top_intents = intent_counts.head(15)
-        
-        ax = top_intents.plot(kind='barh')
-        ax.set_xlabel('Number of Records')
-        ax.set_title('Top 15 Intent Categories (After Augmentation)')
-        
-        # Add value labels
-        for i, v in enumerate(top_intents.values):
-            ax.text(v + 10, i, str(v), va='center')
-        
-        plt.tight_layout()
-        plt.savefig(self.output_dir / 'plots' / 'top_intents.png', dpi=300, bbox_inches='tight')
-        plt.close()
-        
-        # 2. Before/After comparison
-        if before_after_df is not None:
-            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 8))
-            
-            # Stacked bar chart
-            before_after_df[['Before', 'After']].plot(kind='bar', ax=ax1)
-            ax1.set_title('Intent Distribution: Before vs After Augmentation')
-            ax1.set_xlabel('Intent')
-            ax1.set_ylabel('Count')
-            ax1.tick_params(axis='x', rotation=45)
-            ax1.legend()
-            
-            # Change visualization
-            changes = before_after_df['Change'].sort_values()
-            colors = ['red' if x < 0 else 'green' for x in changes]
-            changes.plot(kind='barh', ax=ax2, color=colors)
-            ax2.set_title('Change in Intent Counts')
-            ax2.set_xlabel('Change in Count')
-            ax2.axvline(0, color='black', linestyle='-', linewidth=0.5)
-            
-            plt.tight_layout()
-            plt.savefig(self.output_dir / 'plots' / 'intent_comparison.png', dpi=300, bbox_inches='tight')
-            plt.close()
-            
-            self.visualizations.append('intent_comparison.png')
-        
-        self.visualizations.append('top_intents.png')
-        
-    def _plot_confidence_analysis(self, conf_by_intent, confidence_bins):
-        """Create confidence analysis visualizations."""
-        fig, axes = plt.subplots(2, 2, figsize=(16, 12))
-        
-        # 1. Confidence by intent (box plot)
-        if 'intent_confidence' in self.df.columns:
-            intent_conf_data = []
-            for intent in conf_by_intent.index[:15]:  # Top 15 intents
-                intent_data = self.df[self.df['intent_augmented'] == intent]['intent_confidence']
-                intent_conf_data.append(intent_data)
-            
-            axes[0, 0].boxplot(intent_conf_data, labels=conf_by_intent.index[:15])
-            axes[0, 0].set_title('Confidence Distribution by Intent (Top 15)')
-            axes[0, 0].set_ylabel('Confidence Score')
+        # 1. Intent distribution
+        if 'intent_augmented' in self.df.columns:
+            intent_counts = self.df['intent_augmented'].value_counts().head(10)
+            intent_counts.plot(kind='bar', ax=axes[0, 0])
+            axes[0, 0].set_title('Top 10 Intent Categories')
+            axes[0, 0].set_xlabel('Intent')
+            axes[0, 0].set_ylabel('Count')
             axes[0, 0].tick_params(axis='x', rotation=45)
-            axes[0, 0].axhline(0.7, color='red', linestyle='--', alpha=0.5, label='Threshold')
-            
-        # 2. Confidence distribution pie chart
-        confidence_bins.value_counts().plot(kind='pie', ax=axes[0, 1], autopct='%1.1f%%')
-        axes[0, 1].set_title('Confidence Level Distribution')
-        axes[0, 1].set_ylabel('')
         
-        # 3. Confidence vs frequency scatter
-        conf_freq = pd.DataFrame({
-            'mean_confidence': conf_by_intent['mean'],
-            'count': conf_by_intent['count']
-        })
+        # 2. Coverage improvement
+        if 'improvement' in self.metrics['overview']:
+            imp = self.metrics['overview']['improvement']
+            coverage_data = pd.Series({
+                'Original Unknown': imp['original_unknown'],
+                'Improved': imp['records_improved'],
+                'Still Unknown': imp['augmented_unknown']
+            })
+            coverage_data.plot(kind='pie', ax=axes[0, 1], autopct='%1.1f%%')
+            axes[0, 1].set_title('Coverage Improvement')
+            axes[0, 1].set_ylabel('')
         
-        axes[1, 0].scatter(conf_freq['count'], conf_freq['mean_confidence'], alpha=0.6)
-        axes[1, 0].set_xlabel('Frequency (Count)')
-        axes[1, 0].set_ylabel('Mean Confidence')
-        axes[1, 0].set_title('Intent Frequency vs Mean Confidence')
-        axes[1, 0].axhline(0.7, color='red', linestyle='--', alpha=0.5)
+        # 3. Data completeness
+        if 'completeness' in self.metrics['overview']:
+            comp_data = pd.DataFrame([
+                {'Column': col, 'Completeness': stats['completeness_rate'] * 100}
+                for col, stats in self.metrics['overview']['completeness'].items()
+            ])
+            if not comp_data.empty:
+                comp_data.plot(x='Column', y='Completeness', kind='bar', ax=axes[1, 0], legend=False)
+                axes[1, 0].set_title('Data Completeness by Column')
+                axes[1, 0].set_ylabel('Completeness %')
+                axes[1, 0].tick_params(axis='x', rotation=45)
+                axes[1, 0].axhline(y=80, color='r', linestyle='--', alpha=0.5)
         
-        # Add intent labels for outliers
-        for idx, row in conf_freq.iterrows():
-            if row['mean_confidence'] < 0.6 or row['count'] > conf_freq['count'].quantile(0.9):
-                axes[1, 0].annotate(idx, (row['count'], row['mean_confidence']), 
-                                   fontsize=8, alpha=0.7)
-        
-        # 4. Confidence over time (if timestamp available)
-        if any(col in self.df.columns for col in ['timestamp', 'date', 'created_at']):
-            # Placeholder for temporal analysis
-            axes[1, 1].text(0.5, 0.5, 'Temporal Analysis\n(Requires timestamp data)', 
-                           ha='center', va='center', fontsize=12)
-        else:
-            # Confidence density plot
-            if 'intent_confidence' in self.df.columns:
-                self.df['intent_confidence'].plot(kind='density', ax=axes[1, 1])
-                axes[1, 1].set_title('Confidence Score Density')
-                axes[1, 1].set_xlabel('Confidence Score')
-                axes[1, 1].axvline(self.df['intent_confidence'].mean(), 
-                                  color='red', linestyle='--', 
-                                  label=f'Mean: {self.df["intent_confidence"].mean():.3f}')
-                axes[1, 1].legend()
+        # 4. Confidence distribution
+        if 'intent_confidence' in self.df.columns:
+            self.df['intent_confidence'].hist(bins=30, ax=axes[1, 1], edgecolor='black')
+            axes[1, 1].set_title('Confidence Score Distribution')
+            axes[1, 1].set_xlabel('Confidence Score')
+            axes[1, 1].set_ylabel('Frequency')
+            axes[1, 1].axvline(self.df['intent_confidence'].mean(), color='red', 
+                              linestyle='--', label=f'Mean: {self.df["intent_confidence"].mean():.3f}')
+            axes[1, 1].legend()
         
         plt.tight_layout()
-        plt.savefig(self.output_dir / 'plots' / 'confidence_analysis.png', dpi=300, bbox_inches='tight')
+        plt.savefig(self.output_dir / 'plots' / 'overview_analysis.png', dpi=300, bbox_inches='tight')
         plt.close()
         
-        self.visualizations.append('confidence_analysis.png')
+        self.visualizations.append('overview_analysis.png')
         
-    def _find_distinctive_patterns(self, activity_patterns):
-        """Find patterns that are distinctive for each intent."""
-        distinctive = {}
-        
-        # Calculate activity frequencies across all intents
-        global_activity_freq = Counter()
-        for activities in activity_patterns.values():
-            global_activity_freq.update(activities)
-        
-        # Find distinctive activities for each intent
-        for intent, activities in activity_patterns.items():
-            intent_freq = Counter(activities)
-            distinctive_score = {}
-            
-            for activity, count in intent_freq.items():
-                # Calculate distinctiveness score (TF-IDF like)
-                tf = count / len(activities) if activities else 0
-                idf = np.log(len(activity_patterns) / sum(1 for v in activity_patterns.values() if activity in v))
-                distinctive_score[activity] = tf * idf
-            
-            # Get top distinctive activities
-            top_distinctive = sorted(distinctive_score.items(), 
-                                   key=lambda x: x[1], reverse=True)[:5]
-            distinctive[intent] = {
-                'activities': dict(top_distinctive),
-                'unique_to_intent': [a for a in intent_freq if global_activity_freq[a] == intent_freq[a]]
-            }
-        
-        return distinctive
-        
-    def _analyze_text_features(self):
-        """Analyze text features using TF-IDF."""
-        if 'activity_sequence' not in self.df.columns:
+    def _visualize_intent_patterns(self):
+        """Visualize intent pattern analysis."""
+        if 'intent_patterns' not in self.metrics:
             return
             
-        log.info("Performing TF-IDF analysis...")
-        
-        # Prepare text data
-        texts = self.df['activity_sequence'].fillna('')
-        
-        # TF-IDF analysis
-        tfidf = TfidfVectorizer(max_features=100, ngram_range=(1, 3))
-        tfidf_matrix = tfidf.fit_transform(texts)
-        
-        # Get feature importance by intent
-        feature_names = tfidf.get_feature_names_out()
-        intent_features = {}
-        
-        for intent in self.df['intent_augmented'].unique():
-            intent_mask = self.df['intent_augmented'] == intent
-            if intent_mask.sum() > 0:
-                intent_tfidf = tfidf_matrix[intent_mask].mean(axis=0).A1
-                top_features_idx = intent_tfidf.argsort()[-10:][::-1]
-                intent_features[intent] = {
-                    feature_names[i]: float(intent_tfidf[i]) 
-                    for i in top_features_idx
-                }
-        
-        self.metrics['text_features'] = intent_features
-        
-    def _plot_feature_importance(self):
-        """Create feature importance visualizations."""
-        if 'intent_signatures' not in self.metrics.get('feature_importance', {}):
-            return
-            
-        # 1. Activity heatmap
-        signatures = self.metrics['feature_importance']['intent_signatures']
-        
-        # Create activity-intent matrix
-        all_activities = set()
-        for data in signatures.values():
-            all_activities.update(data['top_activities'].keys())
-        
-        activity_intent_matrix = pd.DataFrame(
-            index=list(signatures.keys())[:15],  # Top 15 intents
-            columns=list(all_activities)[:20]     # Top 20 activities
-        )
-        
-        for intent in activity_intent_matrix.index:
-            for activity in activity_intent_matrix.columns:
-                activity_intent_matrix.loc[intent, activity] = \
-                    signatures.get(intent, {}).get('top_activities', {}).get(activity, 0)
-        
-        activity_intent_matrix = activity_intent_matrix.fillna(0).astype(float)
-        
-        # Normalize by row (intent)
-        activity_intent_matrix = activity_intent_matrix.div(
-            activity_intent_matrix.sum(axis=1), axis=0
-        )
-        
-        plt.figure(figsize=(12, 8))
-        sns.heatmap(activity_intent_matrix, cmap='YlOrRd', cbar_kws={'label': 'Relative Frequency'})
-        plt.title('Activity-Intent Association Heatmap')
-        plt.xlabel('Activities')
-        plt.ylabel('Intents')
-        plt.tight_layout()
-        plt.savefig(self.output_dir / 'plots' / 'activity_intent_heatmap.png', dpi=300, bbox_inches='tight')
-        plt.close()
-        
-        # 2. Distinctive patterns visualization
-        distinctive = self.metrics['feature_importance'].get('distinctive_patterns', {})
-        if distinctive:
-            fig, ax = plt.subplots(figsize=(14, 8))
-            
-            # Prepare data for visualization
-            intent_activities = []
-            for intent, data in list(distinctive.items())[:10]:
-                for activity, score in list(data['activities'].items())[:3]:
-                    intent_activities.append({
-                        'Intent': intent,
-                        'Activity': activity,
-                        'Distinctiveness': score
-                    })
-            
-            if intent_activities:
-                df_distinctive = pd.DataFrame(intent_activities)
-                pivot = df_distinctive.pivot(index='Intent', columns='Activity', values='Distinctiveness')
-                pivot.fillna(0).plot(kind='barh', stacked=True, ax=ax)
-                ax.set_title('Most Distinctive Activities by Intent')
-                ax.set_xlabel('Distinctiveness Score')
-                plt.tight_layout()
-                plt.savefig(self.output_dir / 'plots' / 'distinctive_patterns.png', dpi=300, bbox_inches='tight')
-                plt.close()
-                
-                self.visualizations.append('distinctive_patterns.png')
-        
-        self.visualizations.append('activity_intent_heatmap.png')
-        
-    def _analyze_edge_case_patterns(self, edge_df):
-        """Analyze patterns in edge cases."""
-        patterns = {}
-        
-        if len(edge_df) == 0:
-            return patterns
-            
-        # Activity sequence patterns
-        if 'activity_sequence' in edge_df.columns:
-            sequences = edge_df['activity_sequence'].fillna('').str.split('|')
-            all_activities = []
-            for seq in sequences:
-                all_activities.extend([a for a in seq if a])
-            
-            if all_activities:
-                activity_counts = Counter(all_activities)
-                patterns['common_activities'] = dict(activity_counts.most_common(10))
-                patterns['avg_sequence_length'] = np.mean([len(seq) for seq in sequences])
-        
-        # Intent distribution in edge cases
-        if 'intent_augmented' in edge_df.columns:
-            patterns['intent_distribution'] = edge_df['intent_augmented'].value_counts().to_dict()
-        
-        # Confidence distribution
-        if 'intent_confidence' in edge_df.columns:
-            patterns['confidence_stats'] = {
-                'mean': edge_df['intent_confidence'].mean(),
-                'std': edge_df['intent_confidence'].std(),
-                'min': edge_df['intent_confidence'].min(),
-                'max': edge_df['intent_confidence'].max()
-            }
-        
-        return patterns
-        
-    def _generate_edge_case_report(self, edge_cases):
-        """Generate detailed edge case report."""
-        report_path = self.output_dir / 'reports' / 'edge_case_analysis.txt'
-        
-        with open(report_path, 'w') as f:
-            f.write("EDGE CASE ANALYSIS REPORT\n")
-            f.write("=" * 50 + "\n")
-            f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
-            
-            for case_type, case_df in edge_cases.items():
-                if len(case_df) > 0:
-                    f.write(f"\n{case_type.upper().replace('_', ' ')}\n")
-                    f.write("-" * 30 + "\n")
-                    f.write(f"Count: {len(case_df)}\n")
-                    f.write(f"Percentage: {(len(case_df) / len(self.df)) * 100:.2f}%\n")
-                    
-                    # Sample cases
-                    f.write("\nSample Cases:\n")
-                    sample_cols = ['intent_augmented', 'intent_confidence', 'activity_sequence']
-                    sample_cols = [c for c in sample_cols if c in case_df.columns]
-                    
-                    if sample_cols:
-                        sample = case_df[sample_cols].head(5)
-                        f.write(sample.to_string() + "\n")
-                    
-                    f.write("\n")
-        
-        # Also create a CSV with all edge cases
-        all_edge_cases = []
-        for case_type, case_df in edge_cases.items():
-            if len(case_df) > 0:
-                case_df_copy = case_df.copy()
-                case_df_copy['edge_case_type'] = case_type
-                all_edge_cases.append(case_df_copy)
-        
-        if all_edge_cases:
-            pd.concat(all_edge_cases).to_csv(
-                self.output_dir / 'data' / 'all_edge_cases.csv',
-                index=False
-            )
-        
-    def _analyze_intent_transitions(self):
-        """Analyze how intents change or transition."""
-        transitions = {}
-        
-        if 'intent_base' in self.df.columns and 'intent_augmented' in self.df.columns:
-            # Create transition matrix
-            transition_df = pd.crosstab(
-                self.df['intent_base'], 
-                self.df['intent_augmented'],
-                normalize='index'
-            )
-            
-            transitions['matrix'] = transition_df.to_dict()
-            
-            # Find major transitions
-            major_transitions = []
-            for from_intent in transition_df.index:
-                for to_intent in transition_df.columns:
-                    if from_intent != to_intent and transition_df.loc[from_intent, to_intent] > 0.1:
-                        major_transitions.append({
-                            'from': from_intent,
-                            'to': to_intent,
-                            'probability': transition_df.loc[from_intent, to_intent]
-                        })
-            
-            transitions['major_transitions'] = sorted(
-                major_transitions, 
-                key=lambda x: x['probability'], 
-                reverse=True
-            )[:20]
-        
-        return transitions
-        
-    def _analyze_confidence_patterns(self):
-        """Analyze patterns in confidence scores."""
-        patterns = {}
-        
-        if 'intent_confidence' not in self.df.columns:
-            return patterns
-            
-        # Confidence by sequence length
-        if 'activity_sequence' in self.df.columns:
-            self.df['_seq_len'] = self.df['activity_sequence'].fillna('').str.split('|').str.len()
-            conf_by_length = self.df.groupby('_seq_len')['intent_confidence'].agg(['mean', 'std'])
-            patterns['by_sequence_length'] = conf_by_length.to_dict()
-            self.df.drop('_seq_len', axis=1, inplace=True)
-        
-        # Confidence by method
-        if 'aug_method' in self.df.columns:
-            conf_by_method = self.df.groupby('aug_method')['intent_confidence'].agg(['mean', 'std', 'count'])
-            patterns['by_method'] = conf_by_method.to_dict()
-        
-        return patterns
-        
-    def _analyze_activity_intent_correlation(self):
-        """Analyze correlation between activities and intents."""
-        correlations = {}
-        
-        if 'activity_sequence' not in self.df.columns:
-            return correlations
-            
-        # Create binary matrix for activities
-        all_activities = set()
-        for seq in self.df['activity_sequence'].fillna(''):
-            if seq:
-                all_activities.update(seq.split('|'))
-        
-        # Limit to top 50 activities
-        activity_counts = Counter()
-        for seq in self.df['activity_sequence'].fillna(''):
-            if seq:
-                activity_counts.update(seq.split('|'))
-        
-        top_activities = [act for act, _ in activity_counts.most_common(50)]
-        
-        # Create binary features
-        for activity in top_activities:
-            self.df[f'_has_{activity}'] = self.df['activity_sequence'].fillna('').str.contains(
-                activity, regex=False
-            ).astype(int)
-        
-        # Calculate correlations
-        for intent in self.df['intent_augmented'].value_counts().head(10).index:
-            intent_mask = (self.df['intent_augmented'] == intent).astype(int)
-            activity_correlations = {}
-            
-            for activity in top_activities:
-                corr = intent_mask.corr(self.df[f'_has_{activity}'])
-                if abs(corr) > 0.1:  # Only significant correlations
-                    activity_correlations[activity] = corr
-            
-            correlations[intent] = dict(sorted(
-                activity_correlations.items(), 
-                key=lambda x: abs(x[1]), 
-                reverse=True
-            )[:10])
-        
-        # Clean up temporary columns
-        for activity in top_activities:
-            self.df.drop(f'_has_{activity}', axis=1, inplace=True)
-        
-        return correlations
-        
-    def _plot_model_patterns(self, patterns):
-        """Create model pattern visualizations."""
-        # 1. Intent transition heatmap
-        if 'matrix' in patterns.get('intent_transitions', {}):
-            transition_df = pd.DataFrame(patterns['intent_transitions']['matrix'])
-            
+        # 1. Intent transition heatmap (if available)
+        if 'transitions' in self.metrics['intent_patterns']:
             plt.figure(figsize=(12, 10))
-            sns.heatmap(transition_df, annot=True, fmt='.2f', cmap='Blues', 
+            transition_df = pd.DataFrame(self.metrics['intent_patterns']['transitions']['matrix'])
+            
+            # Normalize by row for better visualization
+            transition_norm = transition_df.div(transition_df.sum(axis=1), axis=0).fillna(0)
+            
+            sns.heatmap(transition_norm, annot=True, fmt='.2f', cmap='Blues',
                        cbar_kws={'label': 'Transition Probability'})
-            plt.title('Intent Transition Matrix (From Base to Augmented)')
+            plt.title('Intent Transition Matrix (Base → Augmented)')
             plt.xlabel('Augmented Intent')
             plt.ylabel('Base Intent')
             plt.tight_layout()
@@ -890,211 +654,445 @@ class IntentExplainabilityAnalyzer:
             
             self.visualizations.append('intent_transitions.png')
         
-        # 2. Confidence patterns
-        if patterns.get('confidence_patterns'):
-            fig, axes = plt.subplots(1, 2, figsize=(14, 6))
-            
-            # Confidence by sequence length
-            if 'by_sequence_length' in patterns['confidence_patterns']:
-                seq_conf = pd.DataFrame(patterns['confidence_patterns']['by_sequence_length']).T
-                if 'mean' in seq_conf.columns:
-                    seq_conf['mean'].plot(kind='line', ax=axes[0], marker='o')
-                    axes[0].fill_between(seq_conf.index, 
-                                       seq_conf['mean'] - seq_conf.get('std', 0),
-                                       seq_conf['mean'] + seq_conf.get('std', 0),
-                                       alpha=0.3)
-                    axes[0].set_title('Confidence by Sequence Length')
-                    axes[0].set_xlabel('Sequence Length')
-                    axes[0].set_ylabel('Mean Confidence')
-                    axes[0].grid(True, alpha=0.3)
-            
-            # Confidence by method
-            if 'by_method' in patterns['confidence_patterns']:
-                method_conf = pd.DataFrame(patterns['confidence_patterns']['by_method']).T
-                if 'mean' in method_conf.columns:
-                    method_conf['mean'].sort_values().plot(kind='barh', ax=axes[1], xerr=method_conf.get('std'))
-                    axes[1].set_title('Confidence by Augmentation Method')
-                    axes[1].set_xlabel('Mean Confidence')
-            
-            plt.tight_layout()
-            plt.savefig(self.output_dir / 'plots' / 'confidence_patterns.png', dpi=300, bbox_inches='tight')
-            plt.close()
-            
-            self.visualizations.append('confidence_patterns.png')
+        # 2. Intent distribution comparison
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
         
-    def _analyze_ngrams(self, n=3):
-        """Analyze n-gram patterns in activity sequences."""
-        ngrams = defaultdict(Counter)
+        # Distribution chart
+        dist = pd.Series(self.metrics['intent_patterns']['distribution']).head(15)
+        dist.plot(kind='barh', ax=ax1)
+        ax1.set_title('Intent Distribution (Top 15)')
+        ax1.set_xlabel('Count')
         
-        if 'activity_sequence' not in self.df.columns:
-            return ngrams
+        # Proportions pie chart
+        props = pd.Series(self.metrics['intent_patterns']['proportions']).head(10)
+        props.plot(kind='pie', ax=ax2, autopct='%1.1f%%')
+        ax2.set_title('Intent Proportions (Top 10)')
+        ax2.set_ylabel('')
+        
+        plt.tight_layout()
+        plt.savefig(self.output_dir / 'plots' / 'intent_distribution.png', dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        self.visualizations.append('intent_distribution.png')
+        
+    def _visualize_confidence_patterns(self):
+        """Visualize confidence pattern analysis."""
+        if 'confidence' not in self.metrics or 'intent_confidence' not in self.df.columns:
+            return
             
-        for idx, row in self.df.iterrows():
-            if pd.notna(row.get('activity_sequence')):
-                activities = row['activity_sequence'].split('|')
-                intent = row['intent_augmented']
-                
-                # Extract n-grams
-                for i in range(len(activities) - n + 1):
-                    ngram = tuple(activities[i:i+n])
-                    ngrams[intent][ngram] += 1
+        fig, axes = plt.subplots(2, 2, figsize=(15, 10))
+        fig.suptitle('Confidence Analysis', fontsize=16)
         
-        # Convert to regular dict with top n-grams
-        ngram_dict = {}
-        for intent, counter in ngrams.items():
-            ngram_dict[intent] = {
-                ' -> '.join(gram): count 
-                for gram, count in counter.most_common(5)
+        # 1. Confidence by intent (top 15)
+        conf_by_intent = pd.DataFrame(self.metrics['confidence']['by_intent']).T
+        if 'mean' in conf_by_intent.columns:
+            top_intents = conf_by_intent.nlargest(15, 'count')
+            top_intents['mean'].sort_values().plot(kind='barh', ax=axes[0, 0], xerr=top_intents['std'])
+            axes[0, 0].set_title('Mean Confidence by Intent (Top 15 by frequency)')
+            axes[0, 0].set_xlabel('Mean Confidence Score')
+            axes[0, 0].axvline(0.7, color='red', linestyle='--', alpha=0.5)
+        
+        # 2. Confidence distribution bands
+        dist_data = pd.Series(self.metrics['confidence']['distribution'])
+        dist_data.plot(kind='bar', ax=axes[0, 1])
+        axes[0, 1].set_title('Confidence Score Distribution')
+        axes[0, 1].set_xlabel('Confidence Band')
+        axes[0, 1].set_ylabel('Count')
+        axes[0, 1].tick_params(axis='x', rotation=45)
+        
+        # 3. Confidence density plot
+        self.df['intent_confidence'].plot(kind='density', ax=axes[1, 0])
+        axes[1, 0].set_title('Confidence Score Density')
+        axes[1, 0].set_xlabel('Confidence Score')
+        axes[1, 0].axvline(self.df['intent_confidence'].mean(), color='red', 
+                          linestyle='--', label=f'Mean: {self.df["intent_confidence"].mean():.3f}')
+        axes[1, 0].axvline(self.df['intent_confidence'].median(), color='green', 
+                          linestyle='--', label=f'Median: {self.df["intent_confidence"].median():.3f}')
+        axes[1, 0].legend()
+        
+        # 4. Box plot by intent
+        intent_conf_data = []
+        intent_labels = []
+        for intent in conf_by_intent.nlargest(10, 'count').index:
+            intent_data = self.df[self.df['intent_augmented'] == intent]['intent_confidence']
+            if len(intent_data) > 0:
+                intent_conf_data.append(intent_data)
+                intent_labels.append(intent[:15])  # Truncate long names
+        
+        if intent_conf_data:
+            axes[1, 1].boxplot(intent_conf_data, labels=intent_labels)
+            axes[1, 1].set_title('Confidence Distribution by Intent (Top 10)')
+            axes[1, 1].set_ylabel('Confidence Score')
+            axes[1, 1].tick_params(axis='x', rotation=45)
+            axes[1, 1].axhline(0.7, color='red', linestyle='--', alpha=0.5)
+        
+        plt.tight_layout()
+        plt.savefig(self.output_dir / 'plots' / 'confidence_analysis.png', dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        self.visualizations.append('confidence_analysis.png')
+        
+    def _visualize_activity_patterns(self):
+        """Visualize activity pattern analysis."""
+        if 'activities' not in self.metrics:
+            return
+            
+        fig, axes = plt.subplots(2, 2, figsize=(16, 10))
+        fig.suptitle('Activity Pattern Analysis', fontsize=16)
+        
+        # 1. Top activities bar chart
+        top_acts = pd.Series(self.metrics['activities']['top_activities']).head(15)
+        top_acts.plot(kind='barh', ax=axes[0, 0])
+        axes[0, 0].set_title('Top 15 Most Common Activities')
+        axes[0, 0].set_xlabel('Frequency')
+        
+        # 2. Sequence length distribution
+        if 'seq_length' in self.df.columns:
+            self.df['seq_length'].hist(bins=30, ax=axes[0, 1], edgecolor='black')
+            axes[0, 1].set_title('Activity Sequence Length Distribution')
+            axes[0, 1].set_xlabel('Sequence Length')
+            axes[0, 1].set_ylabel('Frequency')
+            mean_len = self.metrics['activities']['sequence_stats']['mean_length']
+            axes[0, 1].axvline(mean_len, color='red', linestyle='--', 
+                              label=f'Mean: {mean_len:.1f}')
+            axes[0, 1].legend()
+        
+        # 3. Activity word cloud
+        if self.metrics['activities']['top_activities']:
+            wordcloud = WordCloud(width=400, height=300, background_color='white').generate_from_frequencies(
+                self.metrics['activities']['top_activities']
+            )
+            axes[1, 0].imshow(wordcloud, interpolation='bilinear')
+            axes[1, 0].set_title('Activity Word Cloud')
+            axes[1, 0].axis('off')
+        
+        # 4. Activities per intent
+        if 'by_intent' in self.metrics['activities']:
+            intent_activity_counts = {
+                intent: data['unique_count'] 
+                for intent, data in self.metrics['activities']['by_intent'].items()
             }
+            if intent_activity_counts:
+                pd.Series(intent_activity_counts).head(10).plot(kind='bar', ax=axes[1, 1])
+                axes[1, 1].set_title('Unique Activities per Intent (Top 10)')
+                axes[1, 1].set_ylabel('Unique Activity Count')
+                axes[1, 1].tick_params(axis='x', rotation=45)
         
-        return ngram_dict
+        plt.tight_layout()
+        plt.savefig(self.output_dir / 'plots' / 'activity_patterns.png', dpi=300, bbox_inches='tight')
+        plt.close()
         
-    def _mine_sequential_patterns(self):
-        """Mine frequent sequential patterns."""
-        patterns = {}
+        self.visualizations.append('activity_patterns.png')
         
-        if 'activity_sequence' not in self.df.columns:
-            return patterns
+        # Create activity-intent heatmap
+        self._create_activity_intent_heatmap()
+        
+    def _create_activity_intent_heatmap(self):
+        """Create heatmap showing activity-intent associations."""
+        if 'by_intent' not in self.metrics.get('activities', {}):
+            return
             
-        # Find frequent subsequences by intent
-        for intent in self.df['intent_augmented'].value_counts().head(10).index:
-            intent_sequences = self.df[
-                self.df['intent_augmented'] == intent
-            ]['activity_sequence'].fillna('').tolist()
-            
-            # Find common subsequences
-            subsequence_counts = Counter()
-            for seq in intent_sequences:
-                if seq:
-                    activities = seq.split('|')
-                    # Generate all subsequences of length 2-4
-                    for length in range(2, min(5, len(activities) + 1)):
-                        for i in range(len(activities) - length + 1):
-                            subseq = tuple(activities[i:i+length])
-                            subsequence_counts[subseq] += 1
-            
-            # Get top patterns
-            patterns[intent] = {
-                ' -> '.join(pattern): count
-                for pattern, count in subsequence_counts.most_common(5)
-                if count >= 5  # Minimum support
-            }
+        # Build matrix
+        intents = list(self.metrics['activities']['by_intent'].keys())[:10]
+        all_activities = set()
+        for data in self.metrics['activities']['by_intent'].values():
+            all_activities.update(data['top_activities'].keys())
         
-        return patterns
+        activities = sorted(all_activities, 
+                          key=lambda x: sum(self.metrics['activities']['by_intent'].get(i, {}).get('top_activities', {}).get(x, 0) 
+                                          for i in intents), 
+                          reverse=True)[:20]
         
-    def _plot_sequence_analysis(self):
-        """Create sequence analysis visualizations."""
-        if 'seq_length' not in self.df.columns:
+        matrix = pd.DataFrame(index=intents, columns=activities)
+        for intent in intents:
+            for activity in activities:
+                matrix.loc[intent, activity] = self.metrics['activities']['by_intent'].get(
+                    intent, {}
+                ).get('top_activities', {}).get(activity, 0)
+        
+        matrix = matrix.fillna(0).astype(float)
+        
+        # Normalize by row
+        matrix_norm = matrix.div(matrix.sum(axis=1), axis=0).fillna(0)
+        
+        plt.figure(figsize=(12, 8))
+        sns.heatmap(matrix_norm, cmap='YlOrRd', cbar_kws={'label': 'Relative Frequency'})
+        plt.title('Activity-Intent Association Heatmap')
+        plt.xlabel('Activities')
+        plt.ylabel('Intents')
+        plt.tight_layout()
+        plt.savefig(self.output_dir / 'plots' / 'activity_intent_heatmap.png', dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        self.visualizations.append('activity_intent_heatmap.png')
+        
+    def _visualize_edge_cases(self):
+        """Visualize edge case analysis."""
+        if 'edge_cases' not in self.metrics:
+            return
+            
+        # Summary visualization
+        categories = self.metrics['edge_cases']['categories']
+        
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+        
+        # Edge case distribution
+        edge_case_counts = pd.Series({
+            cat: data['count'] 
+            for cat, data in categories.items()
+        })
+        
+        if not edge_case_counts.empty:
+            edge_case_counts.plot(kind='bar', ax=ax1)
+            ax1.set_title('Edge Case Distribution')
+            ax1.set_ylabel('Count')
+            ax1.tick_params(axis='x', rotation=45)
+        
+        # Edge case percentages
+        edge_case_pcts = pd.Series({
+            cat: data['percentage'] 
+            for cat, data in categories.items()
+        })
+        
+        if not edge_case_pcts.empty:
+            edge_case_pcts.plot(kind='pie', ax=ax2, autopct='%1.1f%%')
+            ax2.set_title('Edge Case Proportions')
+            ax2.set_ylabel('')
+        
+        plt.tight_layout()
+        plt.savefig(self.output_dir / 'plots' / 'edge_case_analysis.png', dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        self.visualizations.append('edge_case_analysis.png')
+        
+    def _visualize_method_performance(self):
+        """Visualize method performance comparison."""
+        if 'methods' not in self.metrics:
             return
             
         fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+        fig.suptitle('Method Performance Analysis', fontsize=16)
         
-        # 1. Sequence length distribution
-        self.df['seq_length'].hist(bins=30, ax=axes[0, 0], edgecolor='black')
-        axes[0, 0].set_title('Distribution of Activity Sequence Lengths')
-        axes[0, 0].set_xlabel('Sequence Length')
-        axes[0, 0].set_ylabel('Frequency')
-        axes[0, 0].axvline(self.df['seq_length'].mean(), color='red', 
-                          linestyle='--', label=f'Mean: {self.df["seq_length"].mean():.1f}')
-        axes[0, 0].legend()
+        # From augmented data
+        if 'from_data' in self.metrics['methods']:
+            # Method usage
+            usage = pd.Series(self.metrics['methods']['from_data']['usage_counts'])
+            if not usage.empty:
+                usage.plot(kind='pie', ax=axes[0, 0], autopct='%1.1f%%')
+                axes[0, 0].set_title('Method Usage Distribution')
+                axes[0, 0].set_ylabel('')
         
-        # 2. Sequence length by intent
-        seq_by_intent = self.df.groupby('intent_augmented')['seq_length'].mean().sort_values(ascending=False).head(15)
-        seq_by_intent.plot(kind='barh', ax=axes[0, 1])
-        axes[0, 1].set_title('Average Sequence Length by Intent (Top 15)')
-        axes[0, 1].set_xlabel('Average Sequence Length')
-        
-        # 3. Word cloud of activities
-        if 'activity_sequence' in self.df.columns:
-            all_activities = ' '.join(self.df['activity_sequence'].fillna('').str.replace('|', ' '))
-            if all_activities.strip():
-                wordcloud = WordCloud(width=400, height=300, background_color='white').generate(all_activities)
-                axes[1, 0].imshow(wordcloud, interpolation='bilinear')
-                axes[1, 0].set_title('Activity Word Cloud')
-                axes[1, 0].axis('off')
-        
-        # 4. N-gram frequency plot
-        if 'ngrams' in self.metrics.get('sequence_analysis', {}):
-            # Aggregate top n-grams across intents
-            all_ngrams = Counter()
-            for intent_ngrams in self.metrics['sequence_analysis']['ngrams'].values():
-                all_ngrams.update(intent_ngrams)
+        # From comparison file
+        if 'from_comparison' in self.metrics['methods']:
+            comp = self.metrics['methods']['from_comparison']
             
-            top_ngrams = dict(all_ngrams.most_common(10))
-            if top_ngrams:
-                pd.Series(top_ngrams).plot(kind='barh', ax=axes[1, 1])
-                axes[1, 1].set_title('Top 10 Activity Sequences (3-grams)')
-                axes[1, 1].set_xlabel('Frequency')
+            # Unknown rates
+            if comp.get('unknown_rates'):
+                unknown_rates = pd.Series(comp['unknown_rates']) * 100
+                unknown_rates.sort_values().plot(kind='barh', ax=axes[0, 1])
+                axes[0, 1].set_title('Unknown Rate by Method')
+                axes[0, 1].set_xlabel('Unknown %')
+            
+            # Processing times
+            if comp.get('processing_times'):
+                times = pd.Series(comp['processing_times'])
+                times.sort_values().plot(kind='barh', ax=axes[1, 0])
+                axes[1, 0].set_title('Processing Time by Method')
+                axes[1, 0].set_xlabel('Time (seconds)')
+            
+            # Improvements
+            if comp.get('improvements'):
+                improvements = pd.Series(comp['improvements'])
+                improvements.sort_values(ascending=False).plot(kind='bar', ax=axes[1, 1])
+                axes[1, 1].set_title('Records Improved by Method')
+                axes[1, 1].set_ylabel('Records Improved')
+                axes[1, 1].tick_params(axis='x', rotation=45)
         
         plt.tight_layout()
-        plt.savefig(self.output_dir / 'plots' / 'sequence_analysis.png', dpi=300, bbox_inches='tight')
+        plt.savefig(self.output_dir / 'plots' / 'method_performance.png', dpi=300, bbox_inches='tight')
         plt.close()
         
-        self.visualizations.append('sequence_analysis.png')
+        self.visualizations.append('method_performance.png')
+        
+    def _extract_ngrams(self, n=3):
+        """Extract n-gram patterns from sequences."""
+        ngrams = defaultdict(int)
+        
+        if 'activity_sequence' not in self.df.columns:
+            return {}
+            
+        for seq in self.df['activity_sequence'].fillna('').head(5000):  # Sample for performance
+            if seq:
+                activities = seq.split('|')
+                for i in range(len(activities) - n + 1):
+                    ngram = ' -> '.join(activities[i:i+n])
+                    ngrams[ngram] += 1
+        
+        # Return top n-grams
+        return dict(Counter(ngrams).most_common(20))
+        
+    def _find_common_subsequences(self, sequences, min_length=2, max_length=4):
+        """Find common subsequences in activity sequences."""
+        subsequence_counts = Counter()
+        
+        for seq in sequences:
+            if seq:
+                activities = seq.split('|')
+                for length in range(min_length, min(max_length + 1, len(activities) + 1)):
+                    for i in range(len(activities) - length + 1):
+                        subseq = tuple(activities[i:i+length])
+                        subsequence_counts[subseq] += 1
+        
+        total = len(sequences)
+        common_patterns = [
+            (pattern, count / total) 
+            for pattern, count in subsequence_counts.most_common(10)
+            if count >= total * 0.1  # At least 10% support
+        ]
+        
+        return common_patterns
+        
+    def _find_major_transitions(self, transition_matrix):
+        """Find major intent transitions."""
+        major_transitions = []
+        
+        for from_intent in transition_matrix.index:
+            for to_intent in transition_matrix.columns:
+                count = transition_matrix.loc[from_intent, to_intent]
+                if from_intent != to_intent and count > 10:  # Significant transitions
+                    major_transitions.append({
+                        'from': from_intent,
+                        'to': to_intent,
+                        'count': int(count),
+                        'percentage': count / transition_matrix.loc[from_intent].sum() * 100
+                    })
+        
+        return sorted(major_transitions, key=lambda x: x['count'], reverse=True)[:20]
+        
+    def _save_rules_report(self, rules):
+        """Save discovered rules to a readable report."""
+        report_path = self.output_dir / 'reports' / 'discovered_rules.txt'
+        
+        with open(report_path, 'w') as f:
+            f.write("DISCOVERED DECISION RULES\n")
+            f.write("=" * 60 + "\n")
+            f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write(f"Total rules discovered: {len(rules['discovered_rules'])}\n\n")
+            
+            f.write("TOP RULES BY CONFIDENCE:\n")
+            f.write("-" * 60 + "\n\n")
+            
+            for i, rule in enumerate(rules['discovered_rules'][:30], 1):
+                f.write(f"{i}. {rule['rule']}\n")
+                f.write(f"   Confidence: {rule['confidence']:.2%}\n")
+                f.write(f"   Support: {rule['support']} cases\n")
+                if 'lift' in rule:
+                    f.write(f"   Lift: {rule['lift']:.2f}\n")
+                f.write("\n")
+                
+        # Also save as CSV for analysis
+        pd.DataFrame(rules['discovered_rules']).to_csv(
+            self.output_dir / 'data' / 'discovered_rules.csv',
+            index=False
+        )
         
     def _generate_single_explanation(self, row):
-        """Generate explanation for a single case."""
+        """Generate explanation for a single prediction."""
         explanation = {
             'intent': row.get('intent_augmented', 'Unknown'),
-            'confidence': row.get('intent_confidence', 0),
+            'confidence': row.get('intent_confidence', 'N/A'),
             'method': row.get('aug_method', 'Unknown'),
+            'base_intent': row.get('intent_base', 'N/A'),
             'activity_sequence': row.get('activity_sequence', ''),
-            'explanation': ''
+            'sequence_length': len(row.get('activity_sequence', '').split('|')) if pd.notna(row.get('activity_sequence')) else 0,
+            'reasoning': []
         }
         
-        # Build explanation based on available data
+        # Build reasoning
         reasons = []
         
-        # Check confidence level
-        conf = row.get('intent_confidence', 0)
-        if conf >= 0.9:
-            reasons.append(f"High confidence prediction ({conf:.2%})")
-        elif conf >= 0.7:
-            reasons.append(f"Moderate confidence prediction ({conf:.2%})")
-        else:
-            reasons.append(f"Low confidence prediction ({conf:.2%})")
+        # Confidence-based reasoning
+        if 'intent_confidence' in row and pd.notna(row['intent_confidence']):
+            conf = row['intent_confidence']
+            if conf >= 0.9:
+                reasons.append(f"Very high confidence ({conf:.2%})")
+            elif conf >= 0.7:
+                reasons.append(f"Good confidence ({conf:.2%})")
+            else:
+                reasons.append(f"Low confidence ({conf:.2%}) - consider manual review")
         
-        # Check activity patterns
+        # Method-based reasoning
+        if 'aug_method' in row and pd.notna(row['aug_method']):
+            method = row['aug_method']
+            method_explanations = {
+                'rule': "Rule-based pattern matching",
+                'ml': "Machine learning model prediction",
+                'semantic': "Semantic similarity analysis",
+                'fuzzy': "Fuzzy string matching",
+                'zeroshot': "Zero-shot classification",
+                'bert': "BERT fine-tuned model",
+                'ensemble': "Ensemble voting from multiple methods"
+            }
+            reasons.append(f"Method: {method_explanations.get(method, method)}")
+        
+        # Activity-based reasoning
         if pd.notna(row.get('activity_sequence')):
             activities = row['activity_sequence'].split('|')
-            if len(activities) > 5:
-                reasons.append(f"Long activity sequence ({len(activities)} activities)")
-            elif len(activities) < 2:
-                reasons.append(f"Short activity sequence ({len(activities)} activities)")
             
-            # Check for key activities
-            key_activities = {
+            # Check for key activities based on discovered patterns
+            key_patterns = {
                 'Transfer': ['transfer', 'acat', 'dtc'],
                 'Sell': ['sell', 'liquidate', 'redemption'],
-                'Fraud Assistance': ['fraud', 'unauthorized', 'dispute']
+                'Fraud Assistance': ['fraud', 'unauthorized', 'dispute'],
+                'Dividend': ['dividend', 'reinvest', 'drip'],
+                'Tax': ['tax', '1099', 'withholding']
             }
             
-            for intent, keywords in key_activities.items():
+            matched_patterns = []
+            for intent, keywords in key_patterns.items():
                 if any(kw in ' '.join(activities).lower() for kw in keywords):
                     if row.get('intent_augmented') == intent:
-                        reasons.append(f"Contains key activities for {intent}")
+                        matched_patterns.append(f"Contains {intent}-related activities")
                     else:
-                        reasons.append(f"Contains {intent}-related activities but classified as {row.get('intent_augmented')}")
+                        matched_patterns.append(f"Note: Contains {intent}-related activities but classified as {row.get('intent_augmented')}")
+            
+            if matched_patterns:
+                reasons.extend(matched_patterns)
+            
+            # Sequence length reasoning
+            if len(activities) > 10:
+                reasons.append(f"Long activity sequence ({len(activities)} activities)")
+            elif len(activities) < 3:
+                reasons.append(f"Short activity sequence ({len(activities)} activities) - may affect accuracy")
         
-        explanation['explanation'] = ' | '.join(reasons)
+        # Change reasoning
+        if 'intent_base' in row and pd.notna(row['intent_base']):
+            if row['intent_base'] == 'Unknown' and row.get('intent_augmented') != 'Unknown':
+                reasons.append("Successfully augmented from Unknown")
+            elif row['intent_base'] != row.get('intent_augmented') and row['intent_base'] != 'Unknown':
+                reasons.append(f"Changed from original: {row['intent_base']} → {row.get('intent_augmented')}")
+        
+        explanation['reasoning'] = ' | '.join(reasons) if reasons else 'No specific reasoning available'
+        
         return explanation
         
     def _create_overview_dashboard(self):
         """Create interactive overview dashboard."""
         fig = make_subplots(
             rows=2, cols=2,
-            subplot_titles=('Intent Distribution', 'Confidence Distribution', 
-                          'Coverage Improvement', 'Method Performance'),
+            subplot_titles=('Intent Distribution', 'Confidence Scores', 
+                          'Data Coverage', 'Method Usage'),
             specs=[[{'type': 'bar'}, {'type': 'histogram'}],
                    [{'type': 'pie'}, {'type': 'scatter'}]]
         )
         
         # 1. Intent distribution
-        intent_counts = self.df['intent_augmented'].value_counts().head(10)
-        fig.add_trace(
-            go.Bar(x=intent_counts.index, y=intent_counts.values, name='Intent Count'),
-            row=1, col=1
-        )
+        if 'intent_augmented' in self.df.columns:
+            intent_counts = self.df['intent_augmented'].value_counts().head(10)
+            fig.add_trace(
+                go.Bar(x=intent_counts.index, y=intent_counts.values, name='Count'),
+                row=1, col=1
+            )
         
         # 2. Confidence histogram
         if 'intent_confidence' in self.df.columns:
@@ -1103,25 +1101,24 @@ class IntentExplainabilityAnalyzer:
                 row=1, col=2
             )
         
-        # 3. Coverage pie chart
-        if 'intent_base' in self.df.columns:
+        # 3. Coverage pie
+        if 'overview' in self.metrics and 'improvement' in self.metrics['overview']:
+            imp = self.metrics['overview']['improvement']
             coverage = pd.Series({
-                'Originally Known': (self.df['intent_base'] != 'Unknown').sum(),
-                'Augmented': ((self.df['intent_base'] == 'Unknown') & 
-                             (self.df['intent_augmented'] != 'Unknown')).sum(),
-                'Still Unknown': (self.df['intent_augmented'] == 'Unknown').sum()
+                'Originally Known': len(self.df) - imp['original_unknown'],
+                'Augmented': imp['records_improved'],
+                'Still Unknown': imp['augmented_unknown']
             })
             fig.add_trace(
                 go.Pie(labels=coverage.index, values=coverage.values),
                 row=2, col=1
             )
         
-        # 4. Method performance scatter
+        # 4. Method scatter (if available)
         if 'aug_method' in self.df.columns and 'intent_confidence' in self.df.columns:
             method_stats = self.df.groupby('aug_method').agg({
                 'intent_confidence': ['mean', 'count']
-            }).round(3)
-            
+            })
             fig.add_trace(
                 go.Scatter(
                     x=method_stats[('intent_confidence', 'count')],
@@ -1133,203 +1130,264 @@ class IntentExplainabilityAnalyzer:
                 ),
                 row=2, col=2
             )
+            fig.update_xaxes(title_text="Count", row=2, col=2)
+            fig.update_yaxes(title_text="Mean Confidence", row=2, col=2)
         
         fig.update_layout(height=800, showlegend=False, 
                          title_text="Intent Augmentation Overview Dashboard")
         fig.write_html(self.output_dir / 'interactive' / 'overview_dashboard.html')
         
-    def _create_intent_dashboard(self):
-        """Create interactive intent-specific dashboard."""
-        # Select top intents for detailed analysis
-        top_intents = self.df['intent_augmented'].value_counts().head(10).index
-        
-        # Create subplot for each intent
-        fig = make_subplots(
-            rows=5, cols=2,
-            subplot_titles=[f'{intent} Analysis' for intent in top_intents],
-            specs=[[{'type': 'histogram'}, {'type': 'histogram'}]] * 5
-        )
-        
-        for i, intent in enumerate(top_intents):
-            row = (i // 2) + 1
-            col = (i % 2) + 1
+    def _create_intent_explorer(self):
+        """Create interactive intent exploration tool."""
+        # Sunburst visualization of intents
+        if 'intent_augmented' in self.df.columns:
+            # Prepare hierarchical data
+            intent_data = []
             
-            intent_data = self.df[self.df['intent_augmented'] == intent]
-            
-            # Confidence distribution for this intent
-            if 'intent_confidence' in intent_data.columns:
-                fig.add_trace(
-                    go.Histogram(
-                        x=intent_data['intent_confidence'],
-                        name=intent,
-                        nbinsx=20,
-                        showlegend=False
-                    ),
-                    row=row, col=col
+            # Add confidence bands if available
+            if 'intent_confidence' in self.df.columns:
+                self.df['_conf_band'] = pd.cut(
+                    self.df['intent_confidence'],
+                    bins=[0, 0.5, 0.7, 0.85, 1.0],
+                    labels=['Low', 'Medium', 'High', 'Very High']
                 )
-        
-        fig.update_layout(height=1200, title_text="Intent-Specific Confidence Analysis")
-        fig.write_html(self.output_dir / 'interactive' / 'intent_dashboard.html')
-        
-    def _create_confidence_dashboard(self):
-        """Create interactive confidence analysis dashboard."""
+                
+                for _, row in self.df.iterrows():
+                    intent_data.append({
+                        'confidence': row['_conf_band'],
+                        'intent': row['intent_augmented'],
+                        'value': 1
+                    })
+                
+                self.df.drop('_conf_band', axis=1, inplace=True)
+            else:
+                for intent in self.df['intent_augmented'].value_counts().index:
+                    intent_data.append({
+                        'intent': intent,
+                        'value': (self.df['intent_augmented'] == intent).sum()
+                    })
+            
+            df_sunburst = pd.DataFrame(intent_data)
+            
+            if 'confidence' in df_sunburst.columns:
+                fig = px.sunburst(
+                    df_sunburst,
+                    path=['confidence', 'intent'],
+                    values='value',
+                    title='Intent Distribution by Confidence Level'
+                )
+            else:
+                fig = px.treemap(
+                    df_sunburst,
+                    path=['intent'],
+                    values='value',
+                    title='Intent Distribution'
+                )
+            
+            fig.update_layout(height=700)
+            fig.write_html(self.output_dir / 'interactive' / 'intent_explorer.html')
+            
+    def _create_confidence_analyzer(self):
+        """Create interactive confidence analysis tool."""
         if 'intent_confidence' not in self.df.columns:
             return
             
-        # Create confidence bands
-        self.df['confidence_band'] = pd.cut(
-            self.df['intent_confidence'],
-            bins=[0, 0.5, 0.7, 0.85, 0.95, 1.0],
-            labels=['Very Low', 'Low', 'Medium', 'High', 'Very High']
+        # Multi-dimensional confidence analysis
+        fig = make_subplots(
+            rows=2, cols=1,
+            subplot_titles=('Confidence Distribution by Intent', 'Confidence Trends'),
+            row_heights=[0.6, 0.4]
         )
         
-        # Sunburst chart of confidence by intent
-        fig = px.sunburst(
-            self.df.groupby(['confidence_band', 'intent_augmented']).size().reset_index(name='count'),
-            path=['confidence_band', 'intent_augmented'],
-            values='count',
-            title='Confidence Distribution by Intent (Sunburst View)'
+        # Box plots for top intents
+        top_intents = self.df['intent_augmented'].value_counts().head(15).index
+        
+        for intent in top_intents:
+            intent_data = self.df[self.df['intent_augmented'] == intent]['intent_confidence']
+            fig.add_trace(
+                go.Box(y=intent_data, name=intent, showlegend=False),
+                row=1, col=1
+            )
+        
+        # Confidence histogram with overlay
+        fig.add_trace(
+            go.Histogram(
+                x=self.df['intent_confidence'],
+                nbinsx=50,
+                name='Distribution',
+                histnorm='probability'
+            ),
+            row=2, col=1
         )
         
-        fig.update_layout(height=800)
-        fig.write_html(self.output_dir / 'interactive' / 'confidence_sunburst.html')
+        fig.update_layout(height=900, title_text="Confidence Analysis Dashboard")
+        fig.update_yaxes(title_text="Confidence Score", row=1, col=1)
+        fig.update_xaxes(title_text="Intent", row=1, col=1)
+        fig.update_xaxes(title_text="Confidence Score", row=2, col=1)
+        fig.update_yaxes(title_text="Probability", row=2, col=1)
         
-        # Clean up temporary column
-        self.df.drop('confidence_band', axis=1, inplace=True)
+        fig.write_html(self.output_dir / 'interactive' / 'confidence_analyzer.html')
         
-    def _create_pattern_explorer(self):
-        """Create interactive pattern exploration tool."""
-        # Activity sequence pattern visualization
+    def _create_pattern_viewer(self):
+        """Create interactive pattern visualization."""
         if 'activity_sequence' not in self.df.columns:
             return
             
-        # Create co-occurrence matrix
-        activity_pairs = defaultdict(int)
+        # Create activity flow visualization
+        # Sample data for performance
+        sample_df = self.df.sample(min(1000, len(self.df)))
         
-        for seq in self.df['activity_sequence'].fillna('').head(1000):  # Sample for performance
+        # Extract transitions
+        transitions = defaultdict(int)
+        for seq in sample_df['activity_sequence'].fillna(''):
             if seq:
                 activities = seq.split('|')
                 for i in range(len(activities) - 1):
-                    pair = (activities[i], activities[i+1])
-                    activity_pairs[pair] += 1
+                    transitions[(activities[i], activities[i+1])] += 1
         
-        # Convert to network graph format
-        edges = []
-        for (source, target), weight in activity_pairs.items():
-            if weight > 5:  # Minimum threshold
-                edges.append({
-                    'source': source,
-                    'target': target,
-                    'weight': weight
-                })
+        # Create Sankey diagram
+        top_transitions = sorted(transitions.items(), key=lambda x: x[1], reverse=True)[:50]
         
-        # Create interactive network graph (simplified for plotly)
-        if edges:
-            # Note: For a full network graph, consider using networkx + pyvis
-            edge_trace = []
-            node_trace = []
-            
-            # This is a simplified visualization
-            activities = list(set([e['source'] for e in edges] + [e['target'] for e in edges]))
-            
-            fig = go.Figure()
-            
-            # Add edges
-            for edge in edges[:50]:  # Limit for visualization
-                fig.add_trace(go.Scatter(
-                    x=[0, 1],
-                    y=[activities.index(edge['source']), activities.index(edge['target'])],
-                    mode='lines',
-                    line=dict(width=edge['weight']/10, color='gray'),
-                    showlegend=False
-                ))
-            
-            fig.update_layout(
-                title='Activity Transition Patterns (Sample)',
-                height=600,
-                showlegend=False
+        sources = []
+        targets = []
+        values = []
+        
+        for (source, target), value in top_transitions:
+            sources.append(source)
+            targets.append(target)
+            values.append(value)
+        
+        # Create node list
+        nodes = list(set(sources + targets))
+        node_dict = {node: i for i, node in enumerate(nodes)}
+        
+        fig = go.Figure(data=[go.Sankey(
+            node=dict(
+                pad=15,
+                thickness=20,
+                line=dict(color="black", width=0.5),
+                label=nodes
+            ),
+            link=dict(
+                source=[node_dict[s] for s in sources],
+                target=[node_dict[t] for t in targets],
+                value=values
             )
-            
-            fig.write_html(self.output_dir / 'interactive' / 'pattern_explorer.html')
+        )])
+        
+        fig.update_layout(
+            title_text="Activity Flow Patterns (Sample)",
+            height=800
+        )
+        
+        fig.write_html(self.output_dir / 'interactive' / 'pattern_viewer.html')
         
     def _generate_executive_summary(self):
-        """Generate executive summary of findings."""
+        """Generate executive summary."""
         summary = {
             'overview': {
-                'total_records_analyzed': len(self.df),
-                'improvement_rate': self.metrics.get('data_quality', {}).get('improvement_rate', 0),
-                'methods_used': list(set(self.df['aug_method'].unique())) if 'aug_method' in self.df.columns else [],
-                'average_confidence': self.df['intent_confidence'].mean() if 'intent_confidence' in self.df.columns else None
+                'total_records': len(self.df),
+                'data_source': str(self.data_path.name),
+                'analysis_date': datetime.now().strftime('%Y-%m-%d')
             },
-            'key_achievements': [],
-            'areas_of_concern': [],
-            'data_quality': {
-                'completeness': 1 - (self.df.get('activity_sequence', pd.Series()).isna().sum() / len(self.df)),
-                'augmentation_coverage': 1 - ((self.df['intent_augmented'] == 'Unknown').sum() / len(self.df))
-            }
+            'key_metrics': {},
+            'highlights': []
         }
         
-        # Key achievements
-        if summary['overview']['improvement_rate'] > 0.5:
-            summary['key_achievements'].append(f"Achieved {summary['overview']['improvement_rate']:.1%} improvement in intent coverage")
+        # Key metrics
+        if 'intent_augmented' in self.df.columns:
+            summary['key_metrics']['unique_intents'] = self.df['intent_augmented'].nunique()
+            summary['key_metrics']['unknown_rate'] = (self.df['intent_augmented'] == 'Unknown').mean()
         
-        if summary['overview']['average_confidence'] and summary['overview']['average_confidence'] > 0.8:
-            summary['key_achievements'].append(f"High average confidence score: {summary['overview']['average_confidence']:.3f}")
+        if 'intent_confidence' in self.df.columns:
+            summary['key_metrics']['avg_confidence'] = self.df['intent_confidence'].mean()
+            summary['key_metrics']['high_confidence_rate'] = (self.df['intent_confidence'] > 0.85).mean()
         
-        # Areas of concern
-        unknown_rate = (self.df['intent_augmented'] == 'Unknown').sum() / len(self.df)
-        if unknown_rate > 0.1:
-            summary['areas_of_concern'].append(f"Still {unknown_rate:.1%} of records have unknown intent")
-        
-        low_conf = (self.df.get('intent_confidence', pd.Series(1)) < 0.7).sum()
-        if low_conf > len(self.df) * 0.2:
-            summary['areas_of_concern'].append(f"{low_conf} records ({low_conf/len(self.df):.1%}) have low confidence scores")
-        
+        if 'overview' in self.metrics and 'improvement' in self.metrics['overview']:
+            imp_rate = self.metrics['overview']['improvement']['improvement_rate']
+            summary['key_metrics']['improvement_rate'] = imp_rate
+            
+        # Highlights
+        if summary['key_metrics'].get('improvement_rate', 0) > 0.5:
+            summary['highlights'].append(
+                f"Achieved {summary['key_metrics']['improvement_rate']:.1%} reduction in unknown intents"
+            )
+            
+        if summary['key_metrics'].get('avg_confidence', 0) > 0.8:
+            summary['highlights'].append(
+                f"High average confidence of {summary['key_metrics']['avg_confidence']:.3f}"
+            )
+            
+        if 'rules' in self.metrics and self.metrics['rules']['discovered_rules']:
+            high_conf_rules = sum(1 for r in self.metrics['rules']['discovered_rules'] if r['confidence'] > 0.8)
+            summary['highlights'].append(
+                f"Discovered {high_conf_rules} high-confidence decision rules"
+            )
+            
         return summary
         
     def _generate_key_findings(self):
-        """Generate key findings from the analysis."""
+        """Generate key findings."""
         findings = []
         
-        # Finding 1: Most improved intents
-        if 'intent_distribution' in self.metrics and 'before_after' in self.metrics['intent_distribution']:
-            ba = self.metrics['intent_distribution']['before_after']
-            if 'Change' in ba:
-                top_improved = sorted(
-                    [(k, v) for k, v in ba['Change'].items() if v > 0],
-                    key=lambda x: x[1],
-                    reverse=True
-                )[:3]
-                if top_improved:
-                    findings.append({
-                        'title': 'Most Improved Intent Categories',
-                        'description': f"Top improved intents: {', '.join([f'{intent} (+{count})' for intent, count in top_improved])}",
-                        'impact': 'high'
-                    })
+        # Finding 1: Most confident intents
+        if 'confidence' in self.metrics and 'insights' in self.metrics['confidence']:
+            high_conf = self.metrics['confidence']['insights']['high_confidence_intents']
+            if high_conf:
+                findings.append({
+                    'title': 'High Confidence Intent Categories',
+                    'description': f"These intents show consistently high confidence: {', '.join(high_conf[:5])}",
+                    'impact': 'Highly reliable predictions for these categories',
+                    'recommendation': 'Can be used for automation with minimal review'
+                })
         
-        # Finding 2: Confidence patterns
-        if 'confidence_analysis' in self.metrics:
-            conf_by_intent = self.metrics['confidence_analysis'].get('by_intent', {})
-            if conf_by_intent and 'mean' in conf_by_intent:
-                low_conf_intents = [
-                    intent for intent, stats in conf_by_intent['mean'].items()
-                    if stats < 0.7
-                ]
-                if low_conf_intents:
-                    findings.append({
-                        'title': 'Low Confidence Intent Categories',
-                        'description': f"Intents with low average confidence: {', '.join(low_conf_intents[:5])}",
-                        'impact': 'medium',
-                        'recommendation': 'Consider additional training data or alternative methods for these intents'
-                    })
+        # Finding 2: Problem areas
+        if 'confidence' in self.metrics and 'insights' in self.metrics['confidence']:
+            low_conf = self.metrics['confidence']['insights']['low_confidence_intents']
+            if low_conf:
+                findings.append({
+                    'title': 'Low Confidence Intent Categories',
+                    'description': f"These intents need improvement: {', '.join(low_conf[:5])}",
+                    'impact': 'May require manual review',
+                    'recommendation': 'Collect more training data or refine rules for these intents'
+                })
         
-        # Finding 3: Distinctive patterns
-        if 'feature_importance' in self.metrics and 'distinctive_patterns' in self.metrics['feature_importance']:
+        # Finding 3: Edge cases
+        if 'edge_cases' in self.metrics:
+            total_edge = self.metrics['edge_cases']['statistics']['total_edge_cases']
+            edge_rate = self.metrics['edge_cases']['statistics']['edge_case_rate']
+            if edge_rate > 5:
+                findings.append({
+                    'title': 'Significant Edge Cases Detected',
+                    'description': f"{total_edge:,} edge cases found ({edge_rate:.1f}% of data)",
+                    'impact': 'May affect overall system reliability',
+                    'recommendation': 'Develop specialized handling for edge cases'
+                })
+        
+        # Finding 4: Activity patterns
+        if 'activities' in self.metrics and 'by_intent' in self.metrics['activities']:
+            distinctive_intents = []
+            for intent, data in self.metrics['activities']['by_intent'].items():
+                if data['unique_count'] > 20 and data['total_activities'] > 100:
+                    distinctive_intents.append(intent)
+            
+            if distinctive_intents:
+                findings.append({
+                    'title': 'Distinctive Activity Patterns Identified',
+                    'description': f"Clear activity patterns found for: {', '.join(distinctive_intents[:5])}",
+                    'impact': 'Strong evidence for rule-based classification',
+                    'recommendation': 'Can create specific rules for these intents'
+                })
+        
+        # Finding 5: Method performance
+        if self.comparison_df is not None and 'unknown_rate' in self.comparison_df.columns:
+            best_method = self.comparison_df['unknown_rate'].idxmin()
+            best_rate = self.comparison_df.loc[best_method, 'unknown_rate']
             findings.append({
-                'title': 'Distinctive Activity Patterns Identified',
-                'description': 'Successfully identified unique activity patterns for each intent category',
-                'impact': 'high',
-                'details': 'See activity-intent heatmap for detailed patterns'
+                'title': 'Best Performing Method',
+                'description': f"{best_method} achieved the lowest unknown rate ({best_rate:.2%})",
+                'impact': 'Optimal method identified',
+                'recommendation': f'Consider using {best_method} as primary method'
             })
         
         return findings
@@ -1339,43 +1397,91 @@ class IntentExplainabilityAnalyzer:
         recommendations = []
         
         # Recommendation 1: Data quality
-        if 'data_quality' in self.metrics:
-            missing_rates = self.metrics['data_quality'].get('missing_data_analysis', {})
-            high_missing = [
-                col for col, stats in missing_rates.items()
-                if stats.get('missing_percentage', 0) > 20
+        if 'overview' in self.metrics and 'completeness' in self.metrics['overview']:
+            low_completeness = [
+                col for col, stats in self.metrics['overview']['completeness'].items()
+                if stats['completeness_rate'] < 0.8
             ]
-            if high_missing:
+            if low_completeness:
                 recommendations.append({
                     'priority': 'high',
                     'category': 'data_quality',
-                    'recommendation': f"Address missing data in columns: {', '.join(high_missing)}",
-                    'expected_impact': 'Improved model accuracy and coverage'
+                    'title': 'Improve Data Completeness',
+                    'description': f"Address missing data in: {', '.join(low_completeness)}",
+                    'expected_impact': 'Could improve predictions for incomplete records',
+                    'effort': 'medium'
                 })
         
-        # Recommendation 2: Low confidence cases
-        low_conf_count = (self.df.get('intent_confidence', pd.Series(1)) < 0.7).sum()
-        if low_conf_count > len(self.df) * 0.15:
-            recommendations.append({
-                'priority': 'high',
-                'category': 'model_improvement',
-                'recommendation': 'Implement ensemble methods or collect more training data for low-confidence cases',
-                'expected_impact': f'Could improve confidence for {low_conf_count:,} records'
-            })
+        # Recommendation 2: Low confidence handling
+        if 'confidence' in self.metrics:
+            low_conf_count = self.metrics['confidence']['distribution'].get('very_low', 0)
+            low_conf_count += self.metrics['confidence']['distribution'].get('low', 0)
+            
+            if low_conf_count > len(self.df) * 0.2:
+                recommendations.append({
+                    'priority': 'high',
+                    'category': 'model_improvement',
+                    'title': 'Address Low Confidence Predictions',
+                    'description': f"{low_conf_count:,} records have low confidence scores",
+                    'expected_impact': f'Could improve {low_conf_count:,} predictions',
+                    'effort': 'high',
+                    'suggested_actions': [
+                        'Implement ensemble methods',
+                        'Collect more training data',
+                        'Add human-in-the-loop for low confidence cases'
+                    ]
+                })
         
-        # Recommendation 3: Edge cases
+        # Recommendation 3: Rule implementation
+        if 'rules' in self.metrics and self.metrics['rules']['discovered_rules']:
+            high_conf_rules = [r for r in self.metrics['rules']['discovered_rules'] if r['confidence'] > 0.85]
+            if len(high_conf_rules) >= 10:
+                recommendations.append({
+                    'priority': 'medium',
+                    'category': 'rule_implementation',
+                    'title': 'Implement High-Confidence Rules',
+                    'description': f"Found {len(high_conf_rules)} rules with >85% confidence",
+                    'expected_impact': 'Fast, interpretable predictions for common cases',
+                    'effort': 'low',
+                    'suggested_actions': [
+                        'Implement top rules in production',
+                        'Create rule-based pre-filter',
+                        'Monitor rule performance over time'
+                    ]
+                })
+        
+        # Recommendation 4: Edge case handling
         if 'edge_cases' in self.metrics:
-            total_edge_cases = sum(
-                stats.get('count', 0) 
-                for stats in self.metrics['edge_cases'].values()
-            )
-            if total_edge_cases > len(self.df) * 0.05:
+            edge_rate = self.metrics['edge_cases']['statistics']['edge_case_rate']
+            if edge_rate > 10:
                 recommendations.append({
                     'priority': 'medium',
                     'category': 'edge_case_handling',
-                    'recommendation': 'Develop specialized rules or models for edge cases',
-                    'expected_impact': f'Better handling of {total_edge_cases:,} edge cases'
+                    'title': 'Develop Edge Case Strategy',
+                    'description': f"{edge_rate:.1f}% of data are edge cases",
+                    'expected_impact': 'Improved handling of difficult cases',
+                    'effort': 'medium',
+                    'suggested_actions': [
+                        'Create specialized models for edge cases',
+                        'Implement fallback strategies',
+                        'Flag edge cases for manual review'
+                    ]
                 })
+        
+        # Recommendation 5: Monitoring
+        recommendations.append({
+            'priority': 'low',
+            'category': 'monitoring',
+            'title': 'Implement Continuous Monitoring',
+            'description': 'Track model performance over time',
+            'expected_impact': 'Early detection of model drift',
+            'effort': 'low',
+            'suggested_actions': [
+                'Monitor confidence score distributions',
+                'Track unknown rate trends',
+                'Set up alerts for anomalies'
+            ]
+        })
         
         return recommendations
         
@@ -1387,58 +1493,201 @@ class IntentExplainabilityAnalyzer:
         <head>
             <title>Intent Augmentation Explainability Report</title>
             <style>
-                body { font-family: Arial, sans-serif; margin: 40px; }
-                h1 { color: #333; }
-                h2 { color: #666; margin-top: 30px; }
-                .summary { background: #f5f5f5; padding: 20px; border-radius: 5px; }
-                .metric { display: inline-block; margin: 10px 20px; }
-                .metric-value { font-size: 24px; font-weight: bold; color: #0066cc; }
-                .finding { margin: 20px 0; padding: 15px; border-left: 4px solid #0066cc; background: #f9f9f9; }
-                .recommendation { margin: 20px 0; padding: 15px; border-left: 4px solid #ff6600; background: #fff5f0; }
-                .high-priority { border-left-color: #ff0000; }
-                .chart { margin: 20px 0; text-align: center; }
-                img { max-width: 100%; height: auto; }
+                body { 
+                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
+                    margin: 0;
+                    padding: 0;
+                    background-color: #f5f5f5;
+                }
+                .container {
+                    max-width: 1200px;
+                    margin: 0 auto;
+                    padding: 20px;
+                    background-color: white;
+                    box-shadow: 0 0 10px rgba(0,0,0,0.1);
+                }
+                h1 { 
+                    color: #2c3e50;
+                    border-bottom: 3px solid #3498db;
+                    padding-bottom: 10px;
+                }
+                h2 { 
+                    color: #34495e;
+                    margin-top: 40px;
+                    border-bottom: 1px solid #ecf0f1;
+                    padding-bottom: 10px;
+                }
+                h3 { color: #7f8c8d; }
+                .summary { 
+                    background: #ecf0f1; 
+                    padding: 25px; 
+                    border-radius: 8px;
+                    margin: 20px 0;
+                }
+                .metrics-grid {
+                    display: grid;
+                    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                    gap: 20px;
+                    margin: 20px 0;
+                }
+                .metric { 
+                    background: white;
+                    padding: 20px;
+                    border-radius: 8px;
+                    text-align: center;
+                    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                }
+                .metric-value { 
+                    font-size: 32px; 
+                    font-weight: bold; 
+                    color: #3498db;
+                    margin: 10px 0;
+                }
+                .metric-label {
+                    color: #7f8c8d;
+                    font-size: 14px;
+                }
+                .finding { 
+                    margin: 25px 0; 
+                    padding: 20px; 
+                    border-left: 4px solid #3498db; 
+                    background: #f8f9fa;
+                    border-radius: 4px;
+                }
+                .recommendation { 
+                    margin: 25px 0; 
+                    padding: 20px; 
+                    border-left: 4px solid #e74c3c; 
+                    background: #fff5f5;
+                    border-radius: 4px;
+                }
+                .high-priority { border-left-color: #e74c3c; background: #ffe5e5; }
+                .medium-priority { border-left-color: #f39c12; background: #fff9e5; }
+                .low-priority { border-left-color: #27ae60; background: #e8f8f5; }
+                .chart { 
+                    margin: 30px 0; 
+                    text-align: center;
+                    background: white;
+                    padding: 20px;
+                    border-radius: 8px;
+                    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                }
+                img { 
+                    max-width: 100%; 
+                    height: auto;
+                    border-radius: 4px;
+                }
+                .highlight {
+                    background: #f39c12;
+                    color: white;
+                    padding: 2px 6px;
+                    border-radius: 3px;
+                    font-weight: bold;
+                }
+                .dashboard-links {
+                    background: #f8f9fa;
+                    padding: 20px;
+                    border-radius: 8px;
+                    margin: 20px 0;
+                }
+                .dashboard-links ul {
+                    list-style: none;
+                    padding: 0;
+                    display: grid;
+                    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+                    gap: 15px;
+                }
+                .dashboard-links li {
+                    background: white;
+                    padding: 15px;
+                    border-radius: 4px;
+                    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                }
+                .dashboard-links a {
+                    color: #3498db;
+                    text-decoration: none;
+                    font-weight: 500;
+                }
+                .dashboard-links a:hover {
+                    text-decoration: underline;
+                }
+                .footer {
+                    margin-top: 50px;
+                    padding: 20px;
+                    text-align: center;
+                    color: #7f8c8d;
+                    border-top: 1px solid #ecf0f1;
+                }
             </style>
         </head>
         <body>
-            <h1>Intent Augmentation Explainability Report</h1>
-            <p>Generated: {timestamp}</p>
-            
-            <div class="summary">
-                <h2>Executive Summary</h2>
-                <div class="metric">
-                    <div>Total Records</div>
-                    <div class="metric-value">{total_records:,}</div>
+            <div class="container">
+                <h1>Intent Augmentation Explainability Report</h1>
+                <p style="color: #7f8c8d;">Generated: {timestamp} | Data Source: {data_source}</p>
+                
+                <div class="summary">
+                    <h2>Executive Summary</h2>
+                    <div class="metrics-grid">
+                        <div class="metric">
+                            <div class="metric-label">Total Records</div>
+                            <div class="metric-value">{total_records:,}</div>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-label">Improvement Rate</div>
+                            <div class="metric-value">{improvement_rate:.1%}</div>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-label">Average Confidence</div>
+                            <div class="metric-value">{avg_confidence:.3f}</div>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-label">Unknown Rate</div>
+                            <div class="metric-value">{unknown_rate:.1%}</div>
+                        </div>
+                    </div>
+                    
+                    <h3>Key Highlights</h3>
+                    <ul>
+                        {highlights}
+                    </ul>
                 </div>
-                <div class="metric">
-                    <div>Improvement Rate</div>
-                    <div class="metric-value">{improvement_rate:.1%}</div>
+                
+                <h2>Key Findings</h2>
+                {findings_html}
+                
+                <h2>Recommendations</h2>
+                {recommendations_html}
+                
+                <h2>Visualizations</h2>
+                {visualizations_html}
+                
+                <div class="dashboard-links">
+                    <h2>Interactive Dashboards</h2>
+                    <ul>
+                        <li><a href="../interactive/overview_dashboard.html">📊 Overview Dashboard</a></li>
+                        <li><a href="../interactive/intent_explorer.html">🔍 Intent Explorer</a></li>
+                        <li><a href="../interactive/confidence_analyzer.html">📈 Confidence Analyzer</a></li>
+                        <li><a href="../interactive/pattern_viewer.html">🔗 Pattern Viewer</a></li>
+                    </ul>
                 </div>
-                <div class="metric">
-                    <div>Average Confidence</div>
-                    <div class="metric-value">{avg_confidence:.3f}</div>
+                
+                <div class="footer">
+                    <p>This report provides comprehensive analysis of the intent augmentation results.<br>
+                    For questions or additional analysis, please refer to the technical documentation.</p>
                 </div>
             </div>
-            
-            <h2>Key Findings</h2>
-            {findings_html}
-            
-            <h2>Recommendations</h2>
-            {recommendations_html}
-            
-            <h2>Visualizations</h2>
-            {visualizations_html}
-            
-            <h2>Interactive Dashboards</h2>
-            <ul>
-                <li><a href="../interactive/overview_dashboard.html">Overview Dashboard</a></li>
-                <li><a href="../interactive/intent_dashboard.html">Intent Analysis Dashboard</a></li>
-                <li><a href="../interactive/confidence_sunburst.html">Confidence Distribution</a></li>
-                <li><a href="../interactive/pattern_explorer.html">Pattern Explorer</a></li>
-            </ul>
         </body>
         </html>
         """
+        
+        # Format data
+        summary = report_data['summary']
+        
+        # Format highlights
+        highlights_html = '\n'.join(
+            f'<li>{highlight}</li>' 
+            for highlight in summary.get('highlights', [])
+        )
         
         # Format findings
         findings_html = ""
@@ -1446,36 +1695,50 @@ class IntentExplainabilityAnalyzer:
             findings_html += f"""
             <div class="finding">
                 <h3>{finding['title']}</h3>
-                <p>{finding['description']}</p>
+                <p><strong>Finding:</strong> {finding['description']}</p>
+                <p><strong>Impact:</strong> {finding.get('impact', 'N/A')}</p>
+                {f"<p><strong>Recommendation:</strong> {finding.get('recommendation', '')}</p>" if finding.get('recommendation') else ''}
             </div>
             """
         
         # Format recommendations  
         recommendations_html = ""
         for rec in report_data['recommendations']:
-            priority_class = "high-priority" if rec['priority'] == 'high' else ""
+            priority_class = f"{rec['priority']}-priority"
+            actions_html = ""
+            if 'suggested_actions' in rec:
+                actions_html = "<ul>" + "".join(f"<li>{action}</li>" for action in rec['suggested_actions']) + "</ul>"
+            
             recommendations_html += f"""
             <div class="recommendation {priority_class}">
-                <h3>{rec['recommendation']}</h3>
-                <p>Expected Impact: {rec['expected_impact']}</p>
+                <h3>{rec['title']} <span class="highlight">{rec['priority'].upper()} PRIORITY</span></h3>
+                <p>{rec['description']}</p>
+                <p><strong>Expected Impact:</strong> {rec['expected_impact']}</p>
+                <p><strong>Effort:</strong> {rec.get('effort', 'Unknown')}</p>
+                {actions_html}
             </div>
             """
         
         # Format visualizations
         visualizations_html = ""
         for viz in report_data['visualizations']:
+            viz_title = viz.replace('_', ' ').replace('.png', '').title()
             visualizations_html += f"""
             <div class="chart">
-                <img src="../plots/{viz}" alt="{viz}">
+                <h3>{viz_title}</h3>
+                <img src="../plots/{viz}" alt="{viz_title}">
             </div>
             """
         
         # Fill template
         html_content = html_template.format(
             timestamp=report_data['generated_at'],
-            total_records=report_data['summary']['overview']['total_records_analyzed'],
-            improvement_rate=report_data['summary']['overview']['improvement_rate'],
-            avg_confidence=report_data['summary']['overview'].get('average_confidence', 0),
+            data_source=report_data['data_source'],
+            total_records=summary['overview']['total_records'],
+            improvement_rate=summary['key_metrics'].get('improvement_rate', 0),
+            avg_confidence=summary['key_metrics'].get('avg_confidence', 0),
+            unknown_rate=summary['key_metrics'].get('unknown_rate', 0),
+            highlights=highlights_html,
             findings_html=findings_html,
             recommendations_html=recommendations_html,
             visualizations_html=visualizations_html
@@ -1486,53 +1749,82 @@ class IntentExplainabilityAnalyzer:
             
     def _generate_markdown_report(self, report_data):
         """Generate markdown report for documentation."""
-        md_content = f"""
-# Intent Augmentation Explainability Report
+        summary = report_data['summary']
+        
+        md_content = f"""# Intent Augmentation Explainability Report
 
-Generated: {report_data['generated_at']}
+**Generated:** {report_data['generated_at']}  
+**Data Source:** {report_data['data_source']}
 
 ## Executive Summary
 
-- **Total Records Analyzed**: {report_data['summary']['overview']['total_records_analyzed']:,}
-- **Improvement Rate**: {report_data['summary']['overview']['improvement_rate']:.1%}
-- **Average Confidence**: {report_data['summary']['overview'].get('average_confidence', 0):.3f}
+### Key Metrics
+- **Total Records Analyzed:** {summary['overview']['total_records']:,}
+- **Improvement Rate:** {summary['key_metrics'].get('improvement_rate', 0):.1%}
+- **Average Confidence:** {summary['key_metrics'].get('avg_confidence', 0):.3f}
+- **Unknown Rate:** {summary['key_metrics'].get('unknown_rate', 0):.1%}
 
-### Key Achievements
-{chr(10).join(f"- {achievement}" for achievement in report_data['summary']['key_achievements'])}
-
-### Areas of Concern
-{chr(10).join(f"- {concern}" for concern in report_data['summary']['areas_of_concern'])}
-
-## Key Findings
-
+### Highlights
 """
         
-        for finding in report_data['key_findings']:
-            md_content += f"""
-### {finding['title']}
-{finding['description']}
+        for highlight in summary.get('highlights', []):
+            md_content += f"- {highlight}\n"
+        
+        md_content += "\n## Key Findings\n\n"
+        
+        for i, finding in enumerate(report_data['key_findings'], 1):
+            md_content += f"""### {i}. {finding['title']}
+
+**Finding:** {finding['description']}
+
+**Impact:** {finding.get('impact', 'N/A')}
 
 """
+            if finding.get('recommendation'):
+                md_content += f"**Recommendation:** {finding['recommendation']}\n\n"
         
-        md_content += """
-## Recommendations
+        md_content += "## Recommendations\n\n"
+        
+        for i, rec in enumerate(report_data['recommendations'], 1):
+            md_content += f"""### {i}. {rec['title']} (Priority: {rec['priority'].upper()})
+
+{rec['description']}
+
+- **Expected Impact:** {rec['expected_impact']}
+- **Effort Required:** {rec.get('effort', 'Unknown')}
 
 """
+            if 'suggested_actions' in rec:
+                md_content += "**Suggested Actions:**\n"
+                for action in rec['suggested_actions']:
+                    md_content += f"- {action}\n"
+                md_content += "\n"
         
-        for rec in report_data['recommendations']:
-            md_content += f"""
-### {rec['recommendation']} (Priority: {rec['priority']})
-Expected Impact: {rec['expected_impact']}
+        md_content += """## Visualizations
 
-"""
-        
-        md_content += """
-## Visualization Gallery
+The following visualizations have been generated:
 
 """
         
         for viz in report_data['visualizations']:
-            md_content += f"![{viz}](../plots/{viz})\n\n"
+            viz_title = viz.replace('_', ' ').replace('.png', '').title()
+            md_content += f"### {viz_title}\n![{viz_title}](../plots/{viz})\n\n"
+        
+        md_content += """## Interactive Dashboards
+
+Explore the data interactively through:
+- [Overview Dashboard](../interactive/overview_dashboard.html)
+- [Intent Explorer](../interactive/intent_explorer.html)
+- [Confidence Analyzer](../interactive/confidence_analyzer.html)
+- [Pattern Viewer](../interactive/pattern_viewer.html)
+
+## Technical Details
+
+For detailed metrics and technical analysis, refer to:
+- `reports/discovered_rules.txt` - Discovered decision rules
+- `data/case_explanations.csv` - Individual case explanations
+- `reports/explainability_report.json` - Complete metrics in JSON format
+"""
         
         with open(self.output_dir / 'reports' / 'explainability_report.md', 'w') as f:
             f.write(md_content)
@@ -1543,12 +1835,12 @@ def main():
     import argparse
     
     parser = argparse.ArgumentParser(
-        description="Generate comprehensive explainability analysis for intent augmentation"
+        description="Generate explainability analysis from augmented data (no models required)"
     )
     parser.add_argument(
         "--input", 
         required=True,
-        help="Path to augmented data CSV file"
+        help="Path to augmented data CSV file (e.g., best_augmented_data.csv)"
     )
     parser.add_argument(
         "--output",
@@ -1559,16 +1851,21 @@ def main():
     args = parser.parse_args()
     
     # Run analysis
-    analyzer = IntentExplainabilityAnalyzer(args.input, args.output)
+    analyzer = DataOnlyExplainabilityAnalyzer(args.input, args.output)
     analyzer.run_full_analysis()
     
+    log.info("=" * 60)
     log.info("Explainability analysis complete!")
     log.info(f"Results saved to: {args.output}")
+    log.info("")
     log.info("Key outputs:")
     log.info("  - Executive report: reports/explainability_report.html")
+    log.info("  - Technical documentation: reports/explainability_report.md")
+    log.info("  - Discovered rules: reports/discovered_rules.txt")
     log.info("  - Interactive dashboards: interactive/")
     log.info("  - Visualizations: plots/")
-    log.info("  - Raw data: data/")
+    log.info("  - Case explanations: data/case_explanations.csv")
+    log.info("=" * 60)
 
 
 if __name__ == "__main__":

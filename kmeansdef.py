@@ -1,3 +1,60 @@
+from sklearn.metrics import silhouette_score, calinski_harabasz_score,\
+                            davies_bouldin_score
+
+def evaluate_clusters(mat, labels) -> dict:
+    """Return a dict of common clustering metrics."""
+    # cosine for silhouette because we used normalised vectors
+    sil  = silhouette_score(mat, labels, metric="cosine")
+    ch   = calinski_harabasz_score(mat, labels)
+    db   = davies_bouldin_score(mat, labels)
+    return {"silhouette_cos": sil, "calinski_harabasz": ch, "davies_bouldin": db}
+    
+    
+    
+    metrics = evaluate_clusters(red, km.labels_)
+log.info("Cluster quality  | "
+         f"silhouette={metrics['silhouette_cos']:.3f}  "
+         f"CH={metrics['calinski_harabasz']:.1f}  "
+         f"DB={metrics['davies_bouldin']:.3f}")
+        
+        
+        
+    all_k_stats = []
+for kk in range(2, 9):
+    km_tmp = KMeans(kk, random_state=42, n_init="auto").fit(red)
+    m      = evaluate_clusters(red, km_tmp.labels_)
+    all_k_stats.append(dict(k=kk, **m))
+pd.DataFrame(all_k_stats).to_csv(OUTDIR/"k_sweep_metrics.csv", index=False)
+
+
+
+
+# after transfer_df['sub_intent_k'] is ready …
+df = pd.read_csv(csv_path, low_memory=False)          # full set
+df["transfer_sub_intent"] = pd.NA                    # default NA
+
+df.loc[transfer_df.index, "transfer_sub_intent"] = transfer_df["sub_intent_k"]
+tagged_path = OUTDIR / "full_dataset_with_transfer_tags.csv"
+df.to_csv(tagged_path, index=False)
+log.info(f"Full dataset with tags ➜ {tagged_path}")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 # ------------------------------------------------------------------ #
 #  (Paste from here ↓↓↓ – keep identical indentation)                #
 # ------------------------------------------------------------------ #

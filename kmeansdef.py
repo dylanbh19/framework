@@ -61,4 +61,33 @@ feat_csv = OUTDIR / "transfer_cluster_features.csv"
 pd.DataFrame(feature_rows).to_csv(feat_csv, index=False)
 log.info(f"Written: {feat_csv}")
 ### === END FEATURE-IMPORTANCE SECTION =========================== ###
-# ------------------------------------------------------------------ #
+# ------------------------------------------------------------------
+
+
+
+
+
+
+
+# ---------- 2-D scatter (one colour per cluster) ------------------ #
+if red.shape[1] >= 2:
+    plt.figure(figsize=(6, 5))
+
+    # Build a discrete palette containing exactly k distinct hues
+    palette = sns.color_palette("husl", n_colors=k)
+
+    sns.scatterplot(
+        x=red[:, 0],
+        y=red[:, 1],
+        hue=transfer_df["sub_intent_k"].astype(str),  # treat labels as categorical
+        palette=palette,
+        s=12,
+        edgecolor="none",
+        legend="full",
+    )
+
+    plt.title("Sub-intent clusters (PCA first 2 comps)")
+    plt.legend(title="Cluster", bbox_to_anchor=(1.04, 1), loc="upper left")
+    plt.tight_layout()
+    plt.savefig(OUTDIR / "cluster_scatter.png", dpi=300)
+    plt.close()

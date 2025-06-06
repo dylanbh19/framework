@@ -35,18 +35,29 @@ OUTDIR = Path("output"); OUTDIR.mkdir(exist_ok=True)
 ###############################################################################
 
 
-def load_and_standardise(csv_path: Path, col_map: dict[str, str],
-                         date_col_std: str, count_col_std: str) -> pd.DataFrame:
-    # … unchanged helper …
-    df = pd.read_csv(csv_path, low_memory=False)
-    missing = [c for c in col_map if c not in df.columns]
-    if missing:
-        print(f"⚠️  {csv_path.name}: missing {missing}")
-    df = df.rename(columns=col_map)
-    if date_col_std in df: df[date_col_std] = pd.to_datetime(df[date_col_std], errors="coerce")
-    if count_col_std in df: df[count_col_std] = pd.to_numeric(df[count_col_std], errors="coerce").fillna(0).astype(int)
-    return df[[date_col_std, count_col_std] + [c for c in ["mail_type"] if c in df]]
+# -------------------- helper  --------------------------------------------
+def load_and_standardise(path: Path,
+                         cmap: dict[str, str],
+                         date_col_std: str = "mail_date",
+                         count_col_std: str = "mail_count") -> pd.DataFrame:
+    """Read one mailing CSV and force standard column names."""
+    df = pd.read_csv(path, low_memory=False)
+    df = df.rename(columns=cmap)
 
+    # 🔽 NEW: sanity-check after renaming
+    missing = [c for c in (date_col_std, count_col_std) if c not in df.columns]
+    if missing:
+        raise KeyError(
+            f"{path.name}: after rename the dataframe is still missing "
+            f"{missing}.  Available columns → {list(df.columns)}\n"
+            f"Hint: update MAIL_COLUMN_MAPS so the raw names exactly match "
+            f"the CSV headers (including spaces & case)."
+        )
+
+    # keep only what we need
+    keep = [date_col_std, count_col_std] + [c for c in ("mail_type",) if c in df]
+    return df[keep]
+# -------------------------------------------------------------------------
 
 def main() -> None:
     # ---------------- 1 & 2: LOAD / AGGREGATE  (unchanged) ---------------- #

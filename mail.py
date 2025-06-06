@@ -57,12 +57,27 @@ def main() -> None:
     mail_df["mail_date"] = mail_df["mail_date"].dt.normalize()
     daily_mail = mail_df.groupby("mail_date", as_index=False)["mail_count"].sum()
 
-    call_df = (pd.read_csv(CALL_FILE, low_memory=False)
-                 .rename(columns=CALL_COL_MAP))
-    call_df["call_date"] = pd.to_datetime(call_df["call_date"], errors="coerce").dt.normalize()
-    call_df["call_count"] = pd.to_numeric(call_df["call_count"], errors="coerce").fillna(0).astype(int)
-    daily_call = call_df.groupby("call_date", as_index=False)["call_count"].sum()
+    # --------------- LOAD & AGGREGATE  CALLS ------------------------------- #
+    call_frames = []
+    for path_str, cmap in zip(CALL_FILES, CALL_COLUMN_MAPS):
+        path = Path(path_str)
+        df_tmp = pd.read_csv(path, low_memory=False).rename(columns=cmap)
 
+        if "call_date" not in df_tmp:
+            raise KeyError(f"{path.name}: mapping must provide date column → 'call_date'")
+
+        # keep ONLY the date; 1 row == 1 call  ➜   let groupby .size() count them
+        call_frames.append(df_tmp[["call_date"]])
+
+    call_df = (pd.concat(call_frames, ignore_index=True)
+                 .assign(call_date=lambda d: pd.to_datetime(d["call_date"],
+                                                            errors="coerce").dt.normalize())
+                 .dropna(subset=["call_date"]))
+
+    # ← daily counts are now simple row counts
+    daily_call = (call_df.groupby("call_date", as_index=False)
+                          .size()
+                          .rename(columns={"size": "call_count"}))
     # ---------------- 3: MERGE (unchanged) -------------------------------- #
     timeline = pd.DataFrame({"date": pd.date_range(daily_mail["mail_date"].min(),
                                                    daily_call["call_date"].max(), freq="D")})

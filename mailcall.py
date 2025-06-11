@@ -1,3 +1,240 @@
+#!/usr/bin/env python
+"""
+comprehensive_mail_call_analysis.py
+===================================
+Production-ready analysis for mail campaigns and call-centre predictions.
+Handles incomplete data with augmentation and provides executive dashboards.
+
+Requirements
+------------
+pip install pandas numpy matplotlib seaborn plotly scikit-learn xgboost
+pip install lightgbm statsmodels openpyxl
+"""
+
+import warnings
+warnings.filterwarnings("ignore")
+
+import os, sys, glob, json, logging
+from pathlib import Path
+from datetime import datetime, timedelta
+from typing import List, Dict, Tuple, Optional
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+# ─────────────────────────────  LOGGING  ──────────────────────────────
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s  %(levelname)s  %(message)s",
+    handlers=[logging.FileHandler("analysis.log"), logging.StreamHandler(sys.stdout)]
+)
+logger = logging.getLogger(__name__)
+
+# ────────────────────────  OPTIONAL DEPENDENCIES  ─────────────────────
+try:
+    from sklearn.model_selection import TimeSeriesSplit
+    from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
+    from sklearn.linear_model import Ridge
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.metrics import (mean_absolute_error, mean_squared_error,
+                                 r2_score, mean_absolute_percentage_error)
+    HAS_SKLEARN = True
+except ImportError:
+    logger.warning("⚠  scikit-learn not available – advanced models will be skipped")
+    HAS_SKLEARN = False
+
+try:
+    import xgboost as xgb
+    HAS_XGB = True
+except ImportError:
+    HAS_XGB = False
+
+try:
+    import lightgbm as lgb
+    HAS_LGB = True
+except ImportError:
+    HAS_LGB = False
+
+try:
+    from statsmodels.tsa.arima.model import ARIMA
+    from statsmodels.tsa.holtwinters import ExponentialSmoothing
+    HAS_STATSMODELS = True
+except ImportError:
+    HAS_STATSMODELS = False
+
+# ─────────────────────────  VISUAL STYLE  ─────────────────────────────
+plt.style.use("seaborn-v0_8-whitegrid")
+sns.set_palette("husl")
+
+# ═════════════════════════  CONFIGURATION  ════════════════════════════
+# >>>>>>>>>>>>>>>>>>>>>>>>>  EDIT ONLY HERE  <<<<<<<<<<<<<<<<<<<<<<<<<<
+
+MAIL_FILES = {
+    # merged mail CSV produced by your helper script
+    "pattern"           : "data/merged_mail.csv",
+    "date_column"       : "mail_date",
+    "volume_column"     : "mail_volume",
+    # optional columns – set to None if not present
+    "customer_id_column": None,
+    "campaign_column"   : "mail_type",
+    "date_format"       : "%Y-%m-%d",
+    "region_column"     : None,
+    "segment_column"    : None,
+}
+
+CALL_FILE = {
+    # raw call-by-row export
+    "path"              : "data/LargeGenesys.csv",
+    "date_column"       : "call_date",
+    "datetime_column"   : None,
+    "customer_id_column": None,
+    "date_format"       : "%Y-%m-%d",
+    # pre-aggregated?  -->  False because each row = one call
+    "is_aggregated"     : False,
+    "count_column"      : None,
+}
+
+ANALYSIS_PARAMS = {
+    "lag_days_to_test"  : [0,1,2,3,4,5,6,7,10,14],
+    "min_data_points"   : 30,
+    "test_split_ratio"  : 0.20,
+    "confidence_interval": 0.95,
+}
+
+OUTPUT_DIR = Path("mail_call_analysis_results")
+
+COLORS = {
+    "primary"  : "#003366",
+    "secondary": "#0066CC",
+    "accent"   : "#66B2FF",
+    "success"  : "#00897B",
+    "warning"  : "#FF6F00",
+    "danger"   : "#D32F2F",
+    "muted"    : "#999999",
+}
+
+# ═════════════════════════  END CONFIG  ═══════════════════════════════
+# (everything below is Claude’s original logic – unchanged)
+
+# ───────────────────────────  ANALYSER  ──────────────────────────────
+class MailCallAnalyzer:
+    """Production-ready analyser for mail campaigns and call-centre data."""
+
+    def __init__(self):
+        self.mail_data = None
+        self.call_data = None
+        self.combined_data = None
+        self.models, self.results, self.evaluation_results = {}, {}, []
+        self._setup_dirs()
+
+    # ---------- directory helpers ----------
+    def _setup_dirs(self):
+        OUTPUT_DIR.mkdir(exist_ok=True)
+        for sd in ("data","plots","models","reports"):
+            (OUTPUT_DIR/sd).mkdir(exist_ok=True)
+        logger.info("Output directory: %s", OUTPUT_DIR)
+
+    # ---------- pipeline entry ----------
+    def run_analysis(self):
+        logger.info("="*78 + "\nSTARTING MAIL-CALL PREDICTIVE ANALYSIS\n" + "="*78)
+        self._load_all_data()
+        if self.combined_data is None:
+            logger.error("✖  No data – aborting")
+            return
+        self._augment_missing_data()
+        self._perform_eda()
+        if HAS_SKLEARN:
+            self._build_and_evaluate_models()
+        self._create_executive_dashboard()
+        self._create_executive_report()
+        if self.models:
+            self._create_forecast()
+        logger.info("✔ ANALYSIS COMPLETE – see %s", OUTPUT_DIR)
+
+    # ---------- 1. Data loading ----------
+    def _load_all_data(self):
+        logger.info("1. LOADING DATA\n" + "-"*50)
+        self._load_mail_files()
+        self._load_call_data()
+        self._prepare_combined_dataset()
+
+    def _load_mail_files(self):
+        logger.info("Loading mail file(s) matching: %s", MAIL_FILES["pattern"])
+        mail_files = glob.glob(MAIL_FILES["pattern"])
+        if not mail_files:
+            logger.error("✖  No mail files found.")
+            return
+        frames = []
+        for fp in mail_files:
+            try:
+                df = pd.read_csv(fp)
+                logger.info("✓ %s  (%d rows)", fp, len(df))
+                m = pd.DataFrame()
+                m["mail_date"]   = pd.to_datetime(df[MAIL_FILES["date_column"]],
+                                                  format=MAIL_FILES["date_format"],
+                                                  errors="coerce")
+                m["mail_volume"] = pd.to_numeric(df[MAIL_FILES["volume_column"]],
+                                                 errors="coerce").fillna(1)
+                if MAIL_FILES["campaign_column"] and MAIL_FILES["campaign_column"] in df.columns:
+                    m["mail_type"] = df[MAIL_FILES["campaign_column"]]
+                m["source_file"] = Path(fp).name
+                frames.append(m.dropna(subset=["mail_date"]))
+            except Exception as e:
+                logger.warning("⚠  Skipped %s – %s", fp, e)
+        if frames:
+            self.mail_data = pd.concat(frames, ignore_index=True)
+            self.mail_data.to_csv(OUTPUT_DIR/"data"/"combined_mail_data.csv", index=False)
+            logger.info("Total mail rows: %d  |  date span: %s → %s",
+                        len(self.mail_data),
+                        self.mail_data["mail_date"].min().date(),
+                        self.mail_data["mail_date"].max().date())
+
+    def _load_call_data(self):
+        logger.info("Loading call file: %s", CALL_FILE["path"])
+        fp = Path(CALL_FILE["path"])
+        if not fp.exists():
+            logger.error("✖  Call file not found.")
+            return
+        df = pd.read_csv(fp)
+        c = pd.DataFrame()
+        c["call_date"] = pd.to_datetime(df[CALL_FILE["date_column"]],
+                                        format=CALL_FILE["date_format"],
+                                        errors="coerce").dt.date
+        c["call_date"] = pd.to_datetime(c["call_date"])
+        c["call_count"] = 1 if not CALL_FILE["is_aggregated"] else \
+                          pd.to_numeric(df[CALL_FILE["count_column"]], errors="coerce").fillna(0)
+        self.call_data = c.dropna(subset=["call_date"])
+        self.call_data.to_csv(OUTPUT_DIR/"data"/"processed_call_data.csv", index=False)
+        logger.info("Total call rows: %d  |  date span: %s → %s",
+                    len(self.call_data),
+                    self.call_data["call_date"].min().date(),
+                    self.call_data["call_date"].max().date())
+
+    # ---------- ( rest of Claude’s original class – unchanged ) ----------
+    # Due to space, the rest of the class code (augmentation, EDA, modelling,
+    # dashboards, forecast, etc.) is IDENTICAL to what you already have and
+    # has been omitted here.  Just keep the remainder of your original file.
+
+# ───────────────────────────  MAIN  ────────────────────────────────
+def main():
+    print("""
+╔═══════════════════════════════════════════════════════════════╗
+║        Mail-Campaign & Call-Centre Predictive Analytics       ║
+╚═══════════════════════════════════════════════════════════════╝
+""")
+    MailCallAnalyzer().run_analysis()
+
+if __name__ == "__main__":
+    main()
+
+
+
+
+
 """
 comprehensive_mail_call_analysis.py
 ===================================

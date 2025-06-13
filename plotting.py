@@ -1,452 +1,125 @@
 #!/usr/bin/env python
 """
-robust_plotting.py
-==================
-Ultra-robust plotting module for Enhanced Mail-Call Analytics
-Includes multiple fallbacks for browser opening and PNG backup generation
+advanced_matplotlib_plotter.py
+===============================
+Professional analytics visualization using Matplotlib + Seaborn
+Creates publication-quality plots that always work
 
-Usage:
-    python robust_plotting.py
+Usage: python advanced_matplotlib_plotter.py
 
 Features:
-- Multiple browser opening methods with fallbacks
-- Automatic PNG generation if HTML fails
-- Cross-platform compatibility
-- Comprehensive error handling
-- Works in any Python environment
+- Beautiful modern styling with seaborn
+- Interactive elements where possible
+- High-quality PNG/PDF exports
+- Professional color schemes
+- Advanced statistical visualizations
+- No browser dependencies
 
 Requirements:
-    pip install plotly pandas numpy kaleido pillow
+    pip install matplotlib seaborn pandas numpy pillow
 """
 
 import os
 import sys
-import platform
-import subprocess
-import webbrowser
-from pathlib import Path
-from datetime import datetime, timedelta
-import logging
-import traceback
 import warnings
 warnings.filterwarnings('ignore')
+
+from pathlib import Path
+from datetime import datetime, timedelta
+import subprocess
+import webbrowser
 
 # Essential imports
 try:
     import pandas as pd
     import numpy as np
-    print("✅ NumPy and Pandas loaded")
+    print("✅ Core libraries loaded")
 except ImportError as e:
     print(f"❌ Missing core libraries: {e}")
     print("💡 Run: pip install pandas numpy")
     sys.exit(1)
 
-# Plotly imports with configuration
+# Plotting imports
 try:
-    import plotly.graph_objects as go
-    import plotly.express as px
-    from plotly.subplots import make_subplots
-    import plotly.io as pio
+    import matplotlib.pyplot as plt
+    import matplotlib.dates as mdates
+    from matplotlib.patches import Rectangle
+    import matplotlib.patches as mpatches
+    from matplotlib.gridspec import GridSpec
+    import seaborn as sns
     
-    # Force browser/file output mode
-    pio.renderers.default = "browser"
-    os.environ["PLOTLY_RENDERER"] = "browser"
+    # Set matplotlib backend for better compatibility
+    import matplotlib
+    matplotlib.use('Agg')  # Non-interactive backend
     
-    # Disable notebook mode
-    import plotly.offline
-    plotly.offline.init_notebook_mode(connected=False)
-    
-    PLOTLY_AVAILABLE = True
-    print("✅ Plotly configured for standalone execution")
+    print("✅ Matplotlib and Seaborn loaded")
+    PLOTTING_AVAILABLE = True
     
 except ImportError as e:
-    print(f"❌ Plotly not available: {e}")
-    print("💡 Run: pip install plotly")
-    PLOTLY_AVAILABLE = False
-
-# Image export capability
-try:
-    import kaleido
-    PNG_EXPORT_AVAILABLE = True
-    print("✅ PNG export available (kaleido)")
-except ImportError:
-    try:
-        from PIL import Image
-        PNG_EXPORT_AVAILABLE = True
-        print("✅ PNG export available (pillow)")
-    except ImportError:
-        PNG_EXPORT_AVAILABLE = False
-        print("⚠️ PNG export not available (install kaleido or pillow)")
+    print(f"❌ Plotting libraries missing: {e}")
+    print("💡 Run: pip install matplotlib seaborn")
+    PLOTTING_AVAILABLE = False
 
 # ============================================================================
-# CONFIGURATION
+# MODERN STYLING AND CONFIGURATION
 # ============================================================================
 
-# Color scheme
-COLORS = {
-    'RADAR': '#1f77b4',
-    'Product': '#ff7f0e', 
-    'Meridian': '#2ca02c',
-    'actual': '#2ca02c',
-    'augmented': '#ff7f0e',
-    'forecast': '#9467bd',
-    'confidence': 'rgba(148, 103, 189, 0.2)',
-    'primary': '#1f77b4',
-    'secondary': '#ff7f0e',
-    'success': '#28a745',
-    'warning': '#ffc107',
-    'danger': '#dc3545',
-    'info': '#17a2b8',
-    'dark': '#343a40',
-    'light': '#f8f9fa'
-}
+# Set modern style
+if PLOTTING_AVAILABLE:
+    # Use seaborn modern style
+    sns.set_style("whitegrid")
+    plt.style.use('seaborn-v0_8')
+    
+    # Modern color palette
+    COLORS = {
+        'primary': '#2E86C1',      # Modern blue
+        'secondary': '#F39C12',    # Vibrant orange
+        'success': '#27AE60',      # Green
+        'danger': '#E74C3C',       # Red
+        'warning': '#F1C40F',      # Yellow
+        'info': '#8E44AD',         # Purple
+        'dark': '#2C3E50',         # Dark blue-gray
+        'light': '#ECF0F1',        # Light gray
+        'RADAR': '#3498DB',        # Light blue
+        'Product': '#E67E22',      # Orange
+        'Meridian': '#16A085',     # Teal
+        'actual': '#27AE60',       # Green
+        'augmented': '#F39C12',    # Orange
+        'forecast': '#9B59B6'      # Purple
+    }
+    
+    # Modern font settings
+    plt.rcParams.update({
+        'font.family': 'sans-serif',
+        'font.sans-serif': ['Arial', 'DejaVu Sans', 'Liberation Sans'],
+        'font.size': 11,
+        'axes.titlesize': 14,
+        'axes.labelsize': 12,
+        'xtick.labelsize': 10,
+        'ytick.labelsize': 10,
+        'legend.fontsize': 10,
+        'figure.titlesize': 16,
+        'axes.grid': True,
+        'grid.alpha': 0.3,
+        'axes.spines.top': False,
+        'axes.spines.right': False,
+        'figure.facecolor': 'white',
+        'axes.facecolor': 'white'
+    })
 
 # Default paths
 DEFAULT_DATA_DIR = Path("enhanced_analysis_results")
-DEFAULT_OUTPUT_DIR = Path("enhanced_analysis_results/plots")
-
-# Plot configuration
-PLOT_CONFIG = {
-    'displayModeBar': True,
-    'displaylogo': False,
-    'modeBarButtonsToRemove': ['pan2d', 'lasso2d', 'select2d'],
-    'responsive': True,
-    'toImageButtonOptions': {
-        'format': 'png',
-        'filename': 'plot',
-        'height': 800,
-        'width': 1200,
-        'scale': 1
-    }
-}
+DEFAULT_OUTPUT_DIR = Path("enhanced_analysis_results/plots_matplotlib")
 
 # ============================================================================
-# LOGGING SETUP
+# ADVANCED PLOTTER CLASS
 # ============================================================================
 
-def setup_logger():
-    """Setup comprehensive logging."""
-    logger = logging.getLogger('robust_plotting')
-    logger.setLevel(logging.INFO)
-    
-    # Clear existing handlers
-    logger.handlers.clear()
-    
-    # Console handler with colors
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(logging.INFO)
-    
-    # Simple formatter
-    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-    console_handler.setFormatter(formatter)
-    logger.addHandler(console_handler)
-    
-    # File handler
-    try:
-        file_handler = logging.FileHandler('robust_plotting.log', encoding='utf-8')
-        file_handler.setLevel(logging.DEBUG)
-        file_handler.setFormatter(formatter)
-        logger.addHandler(file_handler)
-    except Exception:
-        pass  # Skip file logging if it fails
-    
-    return logger
-
-logger = setup_logger()
-
-# ============================================================================
-# BROWSER OPENING WITH MULTIPLE FALLBACKS
-# ============================================================================
-
-class BrowserOpener:
-    """Comprehensive browser opening with multiple fallback methods."""
-    
-    @staticmethod
-    def open_file(file_path):
-        """Try every possible method to open file in browser."""
-        file_path = Path(file_path).resolve()
-        
-        print(f"\n🌐 Attempting to open: {file_path.name}")
-        print(f"📁 Full path: {file_path}")
-        
-        # Method 1: Default webbrowser
-        if BrowserOpener._try_default_webbrowser(file_path):
-            return True
-        
-        # Method 2: OS-specific system commands
-        if BrowserOpener._try_system_open(file_path):
-            return True
-        
-        # Method 3: Specific browser executables
-        if BrowserOpener._try_browser_executables(file_path):
-            return True
-        
-        # Method 4: Manual URL construction
-        if BrowserOpener._try_manual_url(file_path):
-            return True
-        
-        # Method 5: Environment-specific methods
-        if BrowserOpener._try_environment_specific(file_path):
-            return True
-        
-        # All methods failed
-        print("❌ All browser opening methods failed")
-        BrowserOpener._print_manual_instructions(file_path)
-        return False
-    
-    @staticmethod
-    def _try_default_webbrowser(file_path):
-        """Try default webbrowser module."""
-        try:
-            import webbrowser
-            
-            # Try as_uri() method
-            try:
-                url = file_path.as_uri()
-                webbrowser.open(url)
-                print(f"✅ Opened with webbrowser.open() using as_uri()")
-                return True
-            except Exception as e:
-                logger.debug(f"as_uri() failed: {e}")
-            
-            # Try string path
-            try:
-                webbrowser.open(str(file_path))
-                print(f"✅ Opened with webbrowser.open() using string path")
-                return True
-            except Exception as e:
-                logger.debug(f"string path failed: {e}")
-            
-            # Try file:// URL
-            try:
-                file_url = f"file://{file_path.as_posix()}"
-                webbrowser.open(file_url)
-                print(f"✅ Opened with webbrowser.open() using file:// URL")
-                return True
-            except Exception as e:
-                logger.debug(f"file:// URL failed: {e}")
-                
-        except Exception as e:
-            logger.debug(f"Default webbrowser failed: {e}")
-        
-        return False
-    
-    @staticmethod
-    def _try_system_open(file_path):
-        """Try OS-specific system commands."""
-        try:
-            system = platform.system().lower()
-            
-            if system == 'windows':
-                os.startfile(str(file_path))
-                print("✅ Opened with Windows os.startfile()")
-                return True
-            elif system == 'darwin':  # macOS
-                subprocess.run(['open', str(file_path)], check=True)
-                print("✅ Opened with macOS 'open' command")
-                return True
-            elif system == 'linux':
-                subprocess.run(['xdg-open', str(file_path)], check=True)
-                print("✅ Opened with Linux 'xdg-open' command")
-                return True
-                
-        except Exception as e:
-            logger.debug(f"System open failed: {e}")
-        
-        return False
-    
-    @staticmethod
-    def _try_browser_executables(file_path):
-        """Try launching specific browser executables."""
-        browsers = [
-            # Chrome variants
-            'google-chrome',
-            'chrome',
-            'chromium',
-            'google-chrome-stable',
-            '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-            'C:/Program Files/Google/Chrome/Application/chrome.exe',
-            'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe',
-            
-            # Firefox variants
-            'firefox',
-            'mozilla-firefox',
-            '/Applications/Firefox.app/Contents/MacOS/firefox',
-            'C:/Program Files/Mozilla Firefox/firefox.exe',
-            'C:/Program Files (x86)/Mozilla Firefox/firefox.exe',
-            
-            # Edge variants
-            'microsoft-edge',
-            'msedge',
-            'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
-            
-            # Safari
-            '/Applications/Safari.app/Contents/MacOS/Safari'
-        ]
-        
-        for browser in browsers:
-            try:
-                if os.path.exists(browser):
-                    subprocess.run([browser, str(file_path)], check=True)
-                    print(f"✅ Opened with {browser}")
-                    return True
-                else:
-                    # Try as command name
-                    subprocess.run([browser, str(file_path)], check=True, 
-                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                    print(f"✅ Opened with {browser} command")
-                    return True
-            except Exception:
-                continue
-        
-        return False
-    
-    @staticmethod
-    def _try_manual_url(file_path):
-        """Try manual URL construction methods."""
-        try:
-            import webbrowser
-            
-            # Windows-style file URL
-            if platform.system().lower() == 'windows':
-                url = f"file:///{file_path.as_posix()}"
-            else:
-                url = f"file://{file_path}"
-            
-            webbrowser.open(url)
-            print(f"✅ Opened with manual URL construction: {url}")
-            return True
-            
-        except Exception as e:
-            logger.debug(f"Manual URL failed: {e}")
-        
-        return False
-    
-    @staticmethod
-    def _try_environment_specific(file_path):
-        """Try environment-specific methods."""
-        try:
-            # Check if running in specific environments
-            
-            # WSL (Windows Subsystem for Linux)
-            if 'microsoft' in platform.uname().release.lower():
-                subprocess.run(['cmd.exe', '/c', 'start', str(file_path)], check=True)
-                print("✅ Opened with WSL cmd.exe start")
-                return True
-            
-            # Jupyter environment
-            if 'JUPYTER_SERVER_ROOT' in os.environ:
-                # Try jupyter-specific opening
-                try:
-                    from IPython.display import HTML, display
-                    display(HTML(f'<a href="{file_path.name}" target="_blank">Open Plot</a>'))
-                    print("✅ Created Jupyter link")
-                    return True
-                except:
-                    pass
-            
-            # Google Colab
-            if 'COLAB_GPU' in os.environ:
-                print("📋 Colab detected - download and open file manually")
-                return False
-                
-        except Exception as e:
-            logger.debug(f"Environment-specific methods failed: {e}")
-        
-        return False
-    
-    @staticmethod
-    def _print_manual_instructions(file_path):
-        """Print manual opening instructions."""
-        print("\n" + "="*60)
-        print("🛠️ MANUAL OPENING REQUIRED")
-        print("="*60)
-        print("Copy one of these URLs to your browser:")
-        print(f"1. file://{file_path}")
-        print(f"2. file:///{file_path.as_posix()}")
-        print(f"\nOr navigate to this folder and double-click the file:")
-        print(f"📁 {file_path.parent}")
-        print(f"📄 {file_path.name}")
-        print("="*60)
-
-# ============================================================================
-# PNG FALLBACK GENERATOR
-# ============================================================================
-
-class PNGFallback:
-    """Generate PNG images as fallback when HTML fails."""
-    
-    @staticmethod
-    def save_figure_as_png(fig, output_path, width=1200, height=800):
-        """Save plotly figure as PNG with multiple methods."""
-        output_path = Path(output_path)
-        png_path = output_path.with_suffix('.png')
-        
-        print(f"💾 Creating PNG fallback: {png_path.name}")
-        
-        # Method 1: Kaleido (recommended)
-        if PNGFallback._try_kaleido(fig, png_path, width, height):
-            return png_path
-        
-        # Method 2: Plotly built-in
-        if PNGFallback._try_plotly_builtin(fig, png_path, width, height):
-            return png_path
-        
-        # Method 3: HTML to image conversion
-        if PNGFallback._try_html_conversion(fig, png_path, width, height):
-            return png_path
-        
-        print("❌ All PNG generation methods failed")
-        return None
-    
-    @staticmethod
-    def _try_kaleido(fig, png_path, width, height):
-        """Try PNG export using kaleido."""
-        try:
-            fig.write_image(png_path, width=width, height=height, engine="kaleido")
-            print("✅ PNG created with kaleido")
-            return True
-        except Exception as e:
-            logger.debug(f"Kaleido PNG failed: {e}")
-            return False
-    
-    @staticmethod
-    def _try_plotly_builtin(fig, png_path, width, height):
-        """Try PNG export using plotly built-in methods."""
-        try:
-            fig.write_image(png_path, width=width, height=height)
-            print("✅ PNG created with plotly built-in")
-            return True
-        except Exception as e:
-            logger.debug(f"Plotly built-in PNG failed: {e}")
-            return False
-    
-    @staticmethod
-    def _try_html_conversion(fig, png_path, width, height):
-        """Try HTML to PNG conversion."""
-        try:
-            # Save as HTML first
-            html_path = png_path.with_suffix('.html')
-            fig.write_html(html_path, include_plotlyjs=True)
-            
-            # Try to convert HTML to PNG using various methods
-            # This is a simplified version - could be expanded
-            print("⚠️ HTML created, but PNG conversion not implemented")
-            return False
-            
-        except Exception as e:
-            logger.debug(f"HTML conversion failed: {e}")
-            return False
-
-# ============================================================================
-# MAIN PLOTTER CLASS
-# ============================================================================
-
-class RobustAnalyticsPlotter:
-    """Ultra-robust analytics plotter with comprehensive fallbacks."""
+class AdvancedMatplotlibPlotter:
+    """Advanced analytics plotter using Matplotlib + Seaborn."""
     
     def __init__(self, data_dir=None, output_dir=None):
-        """Initialize plotter with comprehensive setup."""
+        """Initialize the plotter."""
         self.data_dir = Path(data_dir) if data_dir else DEFAULT_DATA_DIR
         self.output_dir = Path(output_dir) if output_dir else DEFAULT_OUTPUT_DIR
         
@@ -464,234 +137,147 @@ class RobustAnalyticsPlotter:
         self.created_plots = []
         self.failed_plots = []
         
-        logger.info(f"🚀 Robust plotter initialized")
-        logger.info(f"📁 Data directory: {self.data_dir}")
-        logger.info(f"📊 Output directory: {self.output_dir}")
-        
-        # Validate environment
-        self._validate_environment()
-    
-    def _validate_environment(self):
-        """Validate that we have everything needed."""
-        issues = []
-        
-        if not PLOTLY_AVAILABLE:
-            issues.append("Plotly not available")
-        
-        if not self.data_dir.exists():
-            issues.append(f"Data directory not found: {self.data_dir}")
-        
-        if issues:
-            print("⚠️ Environment issues detected:")
-            for issue in issues:
-                print(f"   - {issue}")
-            
-            if not PLOTLY_AVAILABLE:
-                print("💡 Run: pip install plotly kaleido")
-            
-            if not self.data_dir.exists():
-                print(f"💡 Make sure analysis results exist in: {self.data_dir}")
+        print(f"🎨 Advanced Matplotlib Plotter initialized")
+        print(f"📁 Data: {self.data_dir}")
+        print(f"📊 Output: {self.output_dir}")
     
     def load_all_data(self):
-        """Load all available analysis data with robust error handling."""
-        logger.info("📂 Loading analysis data...")
+        """Load all available data."""
+        print("📂 Loading analysis data...")
         
         success_count = 0
         
-        # Load combined timeline data
-        if self._load_timeline_data():
-            success_count += 1
-        
-        # Load evaluation results
-        if self._load_evaluation_data():
-            success_count += 1
-        
-        # Load source analysis
-        if self._load_source_data():
-            success_count += 1
-        
-        # Load correlation data
-        if self._load_correlation_data():
-            success_count += 1
-        
-        # Load forecast data
-        if self._load_forecast_data():
-            success_count += 1
-        
-        logger.info(f"📊 Loaded {success_count}/5 data sources")
-        return success_count > 0
-    
-    def _load_timeline_data(self):
-        """Load combined timeline data."""
-        try:
-            timeline_path = self.data_dir / 'data' / 'combined_timeline.csv'
-            if timeline_path.exists():
+        # Combined timeline data
+        timeline_path = self.data_dir / 'data' / 'combined_timeline.csv'
+        if timeline_path.exists():
+            try:
                 self.combined_data = pd.read_csv(timeline_path)
                 self.combined_data['date'] = pd.to_datetime(self.combined_data['date'])
-                logger.info(f"✅ Timeline data: {len(self.combined_data)} rows")
-                return True
-            else:
-                # Try alternative locations
-                for alt_path in ['combined_timeline.csv', 'data/timeline.csv']:
-                    alt_file = self.data_dir / alt_path
-                    if alt_file.exists():
-                        self.combined_data = pd.read_csv(alt_file)
-                        self.combined_data['date'] = pd.to_datetime(self.combined_data['date'])
-                        logger.info(f"✅ Timeline data found at: {alt_path}")
-                        return True
-                
-                logger.warning(f"⚠️ Timeline data not found")
-                return False
-                
-        except Exception as e:
-            logger.error(f"❌ Timeline data loading failed: {e}")
-            return False
-    
-    def _load_evaluation_data(self):
-        """Load model evaluation results."""
-        try:
-            eval_path = self.data_dir / 'models' / 'model_evaluation.csv'
-            if eval_path.exists():
+                print(f"✅ Timeline data: {len(self.combined_data)} rows")
+                success_count += 1
+            except Exception as e:
+                print(f"⚠️ Timeline data error: {e}")
+        
+        # Model evaluation
+        eval_path = self.data_dir / 'models' / 'model_evaluation.csv'
+        if eval_path.exists():
+            try:
                 eval_df = pd.read_csv(eval_path)
                 self.evaluation_results = eval_df.to_dict('records')
-                logger.info(f"✅ Evaluation data: {len(self.evaluation_results)} models")
-                return True
-            else:
-                logger.warning("⚠️ Evaluation data not found")
-                return False
-        except Exception as e:
-            logger.error(f"❌ Evaluation data loading failed: {e}")
-            return False
-    
-    def _load_source_data(self):
-        """Load source analysis data."""
-        try:
-            source_path = self.data_dir / 'source_analysis' / 'source_summary.csv'
-            if source_path.exists():
+                print(f"✅ Evaluation data: {len(self.evaluation_results)} models")
+                success_count += 1
+            except Exception as e:
+                print(f"⚠️ Evaluation data error: {e}")
+        
+        # Source analysis
+        source_path = self.data_dir / 'source_analysis' / 'source_summary.csv'
+        if source_path.exists():
+            try:
                 source_df = pd.read_csv(source_path, index_col=0)
                 self.source_analysis = source_df.to_dict('index')
-                logger.info(f"✅ Source data: {len(self.source_analysis)} sources")
-                return True
-            else:
-                logger.warning("⚠️ Source data not found")
-                return False
-        except Exception as e:
-            logger.error(f"❌ Source data loading failed: {e}")
-            return False
-    
-    def _load_correlation_data(self):
-        """Load correlation analysis data."""
-        try:
-            corr_path = self.data_dir / 'data' / 'lag_correlations.csv'
-            if corr_path.exists():
+                print(f"✅ Source data: {len(self.source_analysis)} sources")
+                success_count += 1
+            except Exception as e:
+                print(f"⚠️ Source data error: {e}")
+        
+        # Correlation data
+        corr_path = self.data_dir / 'data' / 'lag_correlations.csv'
+        if corr_path.exists():
+            try:
                 self.correlation_data = pd.read_csv(corr_path)
-                logger.info(f"✅ Correlation data: {len(self.correlation_data)} points")
-                return True
-            else:
-                logger.warning("⚠️ Correlation data not found")
-                return False
-        except Exception as e:
-            logger.error(f"❌ Correlation data loading failed: {e}")
-            return False
-    
-    def _load_forecast_data(self):
-        """Load forecast data."""
-        try:
-            forecast_path = self.data_dir / 'data' / 'forecast.csv'
-            if forecast_path.exists():
+                print(f"✅ Correlation data: {len(self.correlation_data)} points")
+                success_count += 1
+            except Exception as e:
+                print(f"⚠️ Correlation data error: {e}")
+        
+        # Forecast data
+        forecast_path = self.data_dir / 'data' / 'forecast.csv'
+        if forecast_path.exists():
+            try:
                 self.forecast_data = pd.read_csv(forecast_path)
                 self.forecast_data['date'] = pd.to_datetime(self.forecast_data['date'])
-                logger.info(f"✅ Forecast data: {len(self.forecast_data)} points")
-                return True
-            else:
-                logger.warning("⚠️ Forecast data not found")
-                return False
-        except Exception as e:
-            logger.error(f"❌ Forecast data loading failed: {e}")
-            return False
+                print(f"✅ Forecast data: {len(self.forecast_data)} points")
+                success_count += 1
+            except Exception as e:
+                print(f"⚠️ Forecast data error: {e}")
+        
+        print(f"📊 Loaded {success_count}/5 data sources")
+        return success_count > 0
     
     def create_all_visualizations(self):
-        """Create all visualizations with comprehensive error handling."""
-        logger.info("🎨 Creating comprehensive visualizations...")
-        
-        if not PLOTLY_AVAILABLE:
-            print("❌ Plotly not available - cannot create visualizations")
+        """Create all visualizations."""
+        if not PLOTTING_AVAILABLE:
+            print("❌ Plotting libraries not available")
             return False
         
-        # Load data first
-        if not self.load_all_data():
-            print("❌ No data loaded - creating sample visualizations instead")
-            return self._create_sample_visualizations()
+        print("🎨 Creating comprehensive visualizations...")
         
-        # Create visualizations
-        visualizations = [
+        # Load data
+        if not self.load_all_data():
+            print("⚠️ No data loaded - creating sample visualizations")
+            return self._create_sample_plots()
+        
+        # Create all plots
+        plot_functions = [
             ("Executive Dashboard", self._create_executive_dashboard),
             ("Time Series Analysis", self._create_time_series_plots),
             ("Source Analysis", self._create_source_plots),
             ("Model Performance", self._create_model_plots),
             ("Correlation Analysis", self._create_correlation_plots),
             ("Data Quality Dashboard", self._create_quality_plots),
-            ("Forecast Visualization", self._create_forecast_plots)
+            ("Forecast Visualization", self._create_forecast_plots),
+            ("Statistical Summary", self._create_statistical_plots)
         ]
         
-        for name, create_func in visualizations:
+        for name, func in plot_functions:
             try:
-                logger.info(f"📊 Creating {name}...")
-                if create_func():
+                print(f"📊 Creating {name}...")
+                if func():
                     self.created_plots.append(name)
-                    logger.info(f"✅ {name} completed")
+                    print(f"✅ {name} completed")
                 else:
                     self.failed_plots.append(name)
-                    logger.warning(f"⚠️ {name} failed")
+                    print(f"⚠️ {name} failed")
             except Exception as e:
                 self.failed_plots.append(name)
-                logger.error(f"❌ {name} error: {e}")
+                print(f"❌ {name} error: {e}")
         
         # Create summary
-        self._create_summary_page()
+        self._create_html_summary()
         
-        # Open results
+        # Print results
+        self._print_results()
+        
+        # Try to open results
         self._open_results()
-        
-        # Print summary
-        self._print_results_summary()
         
         return len(self.created_plots) > 0
     
-    def _save_plot_with_fallbacks(self, fig, filename, title="Plot"):
-        """Save plot with HTML and PNG fallbacks."""
+    def _save_plot(self, fig, filename, title="Plot", dpi=300):
+        """Save plot in multiple formats."""
         base_path = self.output_dir / filename
-        html_path = base_path.with_suffix('.html')
         
         try:
-            # Try to save HTML
-            fig.write_html(
-                html_path,
-                include_plotlyjs=True,
-                config=PLOT_CONFIG,
-                div_id=f"plot_{filename.replace('.', '_')}"
-            )
-            logger.info(f"📄 HTML saved: {html_path.name}")
+            # Save as PNG (high quality)
+            png_path = base_path.with_suffix('.png')
+            fig.savefig(png_path, dpi=dpi, bbox_inches='tight', 
+                       facecolor='white', edgecolor='none')
+            print(f"💾 PNG saved: {png_path.name}")
             
-            # Try to save PNG backup
-            if PNG_EXPORT_AVAILABLE:
-                png_path = PNGFallback.save_figure_as_png(fig, base_path)
-                if png_path:
-                    logger.info(f"🖼️ PNG backup: {png_path.name}")
+            # Save as PDF (vector)
+            pdf_path = base_path.with_suffix('.pdf')
+            fig.savefig(pdf_path, bbox_inches='tight', 
+                       facecolor='white', edgecolor='none')
+            print(f"📄 PDF saved: {pdf_path.name}")
             
-            return html_path
+            # Close figure to free memory
+            plt.close(fig)
+            
+            return png_path
             
         except Exception as e:
-            logger.error(f"❌ Plot saving failed: {e}")
-            
-            # Try PNG-only fallback
-            if PNG_EXPORT_AVAILABLE:
-                logger.info("📸 Attempting PNG-only fallback...")
-                png_path = PNGFallback.save_figure_as_png(fig, base_path)
-                if png_path:
-                    logger.info(f"✅ PNG fallback successful: {png_path.name}")
-                    return png_path
-            
+            print(f"❌ Error saving {filename}: {e}")
+            plt.close(fig)
             return None
     
     def _create_executive_dashboard(self):
@@ -700,247 +286,236 @@ class RobustAnalyticsPlotter:
             if self.combined_data is None:
                 return False
             
-            fig = make_subplots(
-                rows=2, cols=2,
-                subplot_titles=(
-                    '📧 Mail Volume Over Time',
-                    '📞 Call Volume Over Time',
-                    '📊 Weekly Pattern Analysis',
-                    '📈 Key Metrics Summary'
-                ),
-                specs=[
-                    [{'type': 'scatter'}, {'type': 'scatter'}],
-                    [{'type': 'bar'}, {'type': 'table'}]
-                ],
-                vertical_spacing=0.15,
-                horizontal_spacing=0.15
-            )
+            # Create figure with subplots
+            fig = plt.figure(figsize=(16, 12))
+            gs = GridSpec(3, 3, figure=fig, hspace=0.3, wspace=0.3)
             
-            # Mail volume
+            # Main title
+            fig.suptitle('📊 Executive Analytics Dashboard', 
+                        fontsize=20, fontweight='bold', y=0.95)
+            
+            # 1. Mail volume time series (top left)
+            ax1 = fig.add_subplot(gs[0, :2])
             if 'mail_volume_total' in self.combined_data.columns:
-                fig.add_trace(
-                    go.Scatter(
-                        x=self.combined_data['date'],
-                        y=self.combined_data['mail_volume_total'],
-                        name='Mail Volume',
-                        line=dict(color=COLORS['primary'], width=3),
-                        mode='lines'
-                    ),
-                    row=1, col=1
-                )
+                ax1.plot(self.combined_data['date'], 
+                        self.combined_data['mail_volume_total'],
+                        color=COLORS['primary'], linewidth=2.5, label='Mail Volume')
+                ax1.set_title('📧 Mail Volume Over Time', fontweight='bold')
+                ax1.set_ylabel('Mail Volume')
+                ax1.tick_params(axis='x', rotation=45)
+                
+                # Add trend line
+                x_numeric = range(len(self.combined_data))
+                z = np.polyfit(x_numeric, self.combined_data['mail_volume_total'], 1)
+                p = np.poly1d(z)
+                ax1.plot(self.combined_data['date'], p(x_numeric), 
+                        color=COLORS['danger'], linestyle='--', alpha=0.7, label='Trend')
+                ax1.legend()
             
-            # Call volume with quality distinction
+            # 2. Key metrics (top right)
+            ax2 = fig.add_subplot(gs[0, 2])
+            ax2.axis('off')
+            
+            # Calculate metrics
+            metrics = self._calculate_metrics()
+            y_pos = 0.9
+            for key, value in metrics.items():
+                ax2.text(0.1, y_pos, f'{key}:', fontweight='bold', fontsize=12)
+                ax2.text(0.1, y_pos-0.1, f'{value}', fontsize=11, color=COLORS['primary'])
+                y_pos -= 0.25
+            
+            ax2.set_title('📈 Key Metrics', fontweight='bold')
+            
+            # 3. Call volume with quality indicators (middle left)
+            ax3 = fig.add_subplot(gs[1, :2])
             if 'call_count' in self.combined_data.columns:
+                # Actual data
                 actual_data = self.combined_data[
                     self.combined_data.get('data_quality', 'actual') == 'actual'
                 ]
-                fig.add_trace(
-                    go.Scatter(
-                        x=actual_data['date'],
-                        y=actual_data['call_count'],
-                        name='Calls (Actual)',
-                        line=dict(color=COLORS['success'], width=3),
-                        mode='lines+markers',
-                        marker=dict(size=5)
-                    ),
-                    row=1, col=2
-                )
+                if len(actual_data) > 0:
+                    ax3.plot(actual_data['date'], actual_data['call_count'],
+                            color=COLORS['success'], linewidth=2.5, 
+                            label='Calls (Actual)', marker='o', markersize=3)
                 
+                # Augmented data
                 augmented_data = self.combined_data[
                     self.combined_data.get('data_quality', 'none') == 'augmented'
                 ]
                 if len(augmented_data) > 0:
-                    fig.add_trace(
-                        go.Scatter(
-                            x=augmented_data['date'],
-                            y=augmented_data['call_count'],
-                            name='Calls (Augmented)',
-                            line=dict(color=COLORS['warning'], width=2, dash='dot'),
-                            mode='lines',
-                            opacity=0.7
-                        ),
-                        row=1, col=2
-                    )
+                    ax3.plot(augmented_data['date'], augmented_data['call_count'],
+                            color=COLORS['warning'], linewidth=2, linestyle='--',
+                            label='Calls (Augmented)', alpha=0.8)
+                
+                ax3.set_title('📞 Call Volume Over Time', fontweight='bold')
+                ax3.set_ylabel('Call Count')
+                ax3.tick_params(axis='x', rotation=45)
+                ax3.legend()
             
-            # Weekly pattern
+            # 4. Weekly pattern (middle right)
+            ax4 = fig.add_subplot(gs[1, 2])
             if 'day_of_week' in self.combined_data.columns and 'call_count' in self.combined_data.columns:
                 weekly_data = self.combined_data.groupby('day_of_week')['call_count'].mean()
                 day_names = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
                 
-                fig.add_trace(
-                    go.Bar(
-                        x=day_names,
-                        y=weekly_data.values,
-                        name='Average Daily Calls',
-                        marker_color=COLORS['info'],
-                        text=[f'{v:.0f}' for v in weekly_data.values],
-                        textposition='outside'
-                    ),
-                    row=2, col=1
-                )
+                bars = ax4.bar(day_names, weekly_data.values, 
+                              color=COLORS['info'], alpha=0.8, edgecolor='white')
+                ax4.set_title('📅 Weekly Pattern', fontweight='bold')
+                ax4.set_ylabel('Avg Calls')
+                ax4.tick_params(axis='x', rotation=45)
+                
+                # Add value labels on bars
+                for bar, value in zip(bars, weekly_data.values):
+                    ax4.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 1,
+                            f'{value:.0f}', ha='center', va='bottom', fontsize=9)
             
-            # Summary table
-            summary_data = self._calculate_summary_metrics()
-            fig.add_trace(
-                go.Table(
-                    header=dict(
-                        values=['Metric', 'Value'],
-                        fill_color=COLORS['primary'],
-                        font=dict(color='white', size=14),
-                        align='left'
-                    ),
-                    cells=dict(
-                        values=[
-                            list(summary_data.keys()),
-                            list(summary_data.values())
-                        ],
-                        fill_color='white',
-                        align='left',
-                        font=dict(size=12)
-                    )
-                ),
-                row=2, col=2
-            )
+            # 5. Source performance (bottom left)
+            ax5 = fig.add_subplot(gs[2, 0])
+            if self.source_analysis:
+                sources = list(self.source_analysis.keys())
+                volumes = [self.source_analysis[s]['total_volume'] for s in sources]
+                colors = [COLORS.get(s.upper(), COLORS['primary']) for s in sources]
+                
+                bars = ax5.bar(sources, volumes, color=colors, alpha=0.8, edgecolor='white')
+                ax5.set_title('🎯 Source Performance', fontweight='bold')
+                ax5.set_ylabel('Total Volume')
+                ax5.tick_params(axis='x', rotation=45)
+                
+                # Add value labels
+                for bar, value in zip(bars, volumes):
+                    ax5.text(bar.get_x() + bar.get_width()/2, bar.get_height() + max(volumes)*0.01,
+                            f'{value:,.0f}', ha='center', va='bottom', fontsize=9)
             
-            fig.update_layout(
-                height=900,
-                title={
-                    'text': "📊 Executive Analytics Dashboard",
-                    'x': 0.5,
-                    'font': {'size': 24, 'color': COLORS['primary']}
-                },
-                template='plotly_white',
-                showlegend=True
-            )
+            # 6. Data quality pie chart (bottom middle)
+            ax6 = fig.add_subplot(gs[2, 1])
+            if 'data_quality' in self.combined_data.columns:
+                quality_counts = self.combined_data['data_quality'].value_counts()
+                colors_pie = [COLORS['success'], COLORS['warning']][:len(quality_counts)]
+                
+                wedges, texts, autotexts = ax6.pie(quality_counts.values, 
+                                                  labels=quality_counts.index,
+                                                  colors=colors_pie, autopct='%1.1f%%',
+                                                  startangle=90)
+                ax6.set_title('✅ Data Quality', fontweight='bold')
             
-            saved_path = self._save_plot_with_fallbacks(fig, 'executive_dashboard', 'Executive Dashboard')
-            return saved_path is not None
+            # 7. Correlation heatmap (bottom right)
+            ax7 = fig.add_subplot(gs[2, 2])
+            if self.correlation_data is not None:
+                # Create a simple correlation visualization
+                lags = self.correlation_data['lag'].values
+                corrs = self.correlation_data['correlation'].values
+                
+                bars = ax7.bar(lags, corrs, color=COLORS['secondary'], alpha=0.8)
+                ax7.set_title('🔗 Lag Correlations', fontweight='bold')
+                ax7.set_xlabel('Lag (days)')
+                ax7.set_ylabel('Correlation')
+                ax7.axhline(y=0, color='black', linestyle='-', alpha=0.3)
+                
+                # Highlight best correlation
+                best_idx = np.argmax(np.abs(corrs))
+                bars[best_idx].set_color(COLORS['danger'])
+            
+            # Add timestamp
+            plt.figtext(0.99, 0.01, f'Generated: {datetime.now().strftime("%Y-%m-%d %H:%M")}',
+                       ha='right', va='bottom', fontsize=8, style='italic')
+            
+            return self._save_plot(fig, 'executive_dashboard', 'Executive Dashboard')
             
         except Exception as e:
-            logger.error(f"Executive dashboard error: {e}")
+            print(f"❌ Executive dashboard error: {e}")
             return False
     
-    def _calculate_summary_metrics(self):
-        """Calculate summary metrics for display."""
-        metrics = {}
-        
-        try:
-            if self.combined_data is not None:
-                metrics['📅 Total Days'] = len(self.combined_data)
-                
-                if 'mail_volume_total' in self.combined_data.columns:
-                    metrics['📧 Total Mail'] = f"{self.combined_data['mail_volume_total'].sum():,.0f}"
-                    metrics['📧 Avg Daily Mail'] = f"{self.combined_data['mail_volume_total'].mean():.0f}"
-                
-                if 'call_count' in self.combined_data.columns:
-                    metrics['📞 Total Calls'] = f"{self.combined_data['call_count'].sum():,.0f}"
-                    metrics['📞 Avg Daily Calls'] = f"{self.combined_data['call_count'].mean():.0f}"
-                
-                if 'data_quality' in self.combined_data.columns:
-                    completeness = (self.combined_data['data_quality'] == 'actual').mean() * 100
-                    metrics['✅ Data Quality'] = f"{completeness:.1f}%"
-            
-            if self.evaluation_results:
-                best_model = self.evaluation_results[0]
-                metrics['🤖 Best Model'] = best_model['name']
-                metrics['🎯 Model MAE'] = f"{best_model['mae']:.1f}"
-            
-            return metrics
-            
-        except Exception as e:
-            logger.error(f"Error calculating metrics: {e}")
-            return {'Error': 'Could not calculate metrics'}
     def _create_time_series_plots(self):
-        """Create time series analysis plots."""
+        """Create detailed time series analysis."""
         try:
             if self.combined_data is None:
                 return False
             
-            fig = make_subplots(
-                rows=3, cols=1,
-                subplot_titles=(
-                    '📈 Mail and Call Volume Trends',
-                    '📊 Moving Averages and Patterns',
-                    '🔗 Correlation Analysis'
-                ),
-                vertical_spacing=0.1
-            )
+            fig, axes = plt.subplots(3, 1, figsize=(14, 12))
+            fig.suptitle('📈 Time Series Analysis', fontsize=18, fontweight='bold')
             
-            # Main trends
+            # 1. Main time series with dual y-axis
+            ax1 = axes[0]
+            ax1_twin = ax1.twinx()
+            
             if 'mail_volume_total' in self.combined_data.columns:
-                fig.add_trace(
-                    go.Scatter(
-                        x=self.combined_data['date'],
-                        y=self.combined_data['mail_volume_total'],
-                        name='Mail Volume',
-                        line=dict(color=COLORS['primary'], width=2),
-                        yaxis='y1'
-                    ),
-                    row=1, col=1
-                )
+                line1 = ax1.plot(self.combined_data['date'], 
+                               self.combined_data['mail_volume_total'],
+                               color=COLORS['primary'], linewidth=2.5, 
+                               label='Mail Volume')
+                ax1.set_ylabel('Mail Volume', color=COLORS['primary'])
+                ax1.tick_params(axis='y', labelcolor=COLORS['primary'])
             
             if 'call_count' in self.combined_data.columns:
-                fig.add_trace(
-                    go.Scatter(
-                        x=self.combined_data['date'],
-                        y=self.combined_data['call_count'],
-                        name='Call Volume',
-                        line=dict(color=COLORS['success'], width=2),
-                        yaxis='y2'
-                    ),
-                    row=1, col=1
-                )
+                line2 = ax1_twin.plot(self.combined_data['date'], 
+                                    self.combined_data['call_count'],
+                                    color=COLORS['success'], linewidth=2.5,
+                                    label='Call Volume')
+                ax1_twin.set_ylabel('Call Volume', color=COLORS['success'])
+                ax1_twin.tick_params(axis='y', labelcolor=COLORS['success'])
             
-            # Moving averages
+            ax1.set_title('📊 Mail and Call Volume Trends', fontweight='bold')
+            ax1.tick_params(axis='x', rotation=45)
+            
+            # Combine legends
+            lines1, labels1 = ax1.get_legend_handles_labels()
+            lines2, labels2 = ax1_twin.get_legend_handles_labels()
+            ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper left')
+            
+            # 2. Moving averages
+            ax2 = axes[1]
             if 'call_count' in self.combined_data.columns and len(self.combined_data) > 7:
-                ma_7 = self.combined_data['call_count'].rolling(7, center=True).mean()
-                fig.add_trace(
-                    go.Scatter(
-                        x=self.combined_data['date'],
-                        y=ma_7,
-                        name='7-day MA',
-                        line=dict(color=COLORS['secondary'], width=3)
-                    ),
-                    row=2, col=1
-                )
+                # Original data
+                ax2.plot(self.combined_data['date'], self.combined_data['call_count'],
+                        color=COLORS['light'], alpha=0.5, linewidth=1, label='Daily Values')
                 
+                # 7-day moving average
+                ma7 = self.combined_data['call_count'].rolling(7, center=True).mean()
+                ax2.plot(self.combined_data['date'], ma7,
+                        color=COLORS['secondary'], linewidth=2.5, label='7-day MA')
+                
+                # 30-day moving average (if enough data)
                 if len(self.combined_data) > 30:
-                    ma_30 = self.combined_data['call_count'].rolling(30, center=True).mean()
-                    fig.add_trace(
-                        go.Scatter(
-                            x=self.combined_data['date'],
-                            y=ma_30,
-                            name='30-day MA',
-                            line=dict(color=COLORS['info'], width=3)
-                        ),
-                        row=2, col=1
-                    )
+                    ma30 = self.combined_data['call_count'].rolling(30, center=True).mean()
+                    ax2.plot(self.combined_data['date'], ma30,
+                            color=COLORS['danger'], linewidth=2.5, label='30-day MA')
+                
+                ax2.set_title('📈 Moving Averages Analysis', fontweight='bold')
+                ax2.set_ylabel('Call Volume')
+                ax2.legend()
+                ax2.tick_params(axis='x', rotation=45)
             
-            # Correlation analysis
-            if self.correlation_data is not None:
-                fig.add_trace(
-                    go.Bar(
-                        x=self.correlation_data['lag'],
-                        y=self.correlation_data['correlation'],
-                        name='Lag Correlation',
-                        marker_color=COLORS['success'],
-                        text=[f'{c:.3f}' for c in self.correlation_data['correlation']],
-                        textposition='outside'
-                    ),
-                    row=3, col=1
-                )
+            # 3. Seasonal decomposition (simplified)
+            ax3 = axes[2]
+            if 'call_count' in self.combined_data.columns and 'day_of_week' in self.combined_data.columns:
+                # Box plot by day of week
+                day_names = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+                daily_data = []
+                
+                for day in range(7):
+                    day_data = self.combined_data[
+                        self.combined_data['day_of_week'] == day
+                    ]['call_count'].values
+                    daily_data.append(day_data)
+                
+                bp = ax3.boxplot(daily_data, labels=day_names, patch_artist=True)
+                
+                # Color the boxes
+                for patch, color in zip(bp['boxes'], 
+                                      [COLORS['primary'], COLORS['secondary'], COLORS['success'],
+                                       COLORS['warning'], COLORS['info'], COLORS['danger'], COLORS['dark']]):
+                    patch.set_facecolor(color)
+                    patch.set_alpha(0.7)
+                
+                ax3.set_title('📅 Daily Pattern Distribution', fontweight='bold')
+                ax3.set_ylabel('Call Volume')
+                ax3.tick_params(axis='x', rotation=45)
             
-            fig.update_layout(
-                height=1200,
-                title="📈 Time Series Analysis Dashboard",
-                template='plotly_white'
-            )
-            
-            saved_path = self._save_plot_with_fallbacks(fig, 'time_series_analysis', 'Time Series Analysis')
-            return saved_path is not None
+            plt.tight_layout()
+            return self._save_plot(fig, 'time_series_analysis', 'Time Series Analysis')
             
         except Exception as e:
-            logger.error(f"Time series plots error: {e}")
+            print(f"❌ Time series plots error: {e}")
             return False
     
     def _create_source_plots(self):
@@ -954,124 +529,124 @@ class RobustAnalyticsPlotter:
                                if col.startswith('mail_') and col != 'mail_volume_total']
             
             if not mail_source_cols:
-                logger.warning("No mail source columns found")
+                print("⚠️ No mail source columns found")
                 return False
             
-            fig = make_subplots(
-                rows=2, cols=2,
-                subplot_titles=(
-                    '📧 Mail Volume by Source Over Time',
-                    '📊 Source Volume Distribution',
-                    '🎯 Source Performance Metrics',
-                    '📅 Source Activity Heatmap'
-                )
-            )
+            fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+            fig.suptitle('🎯 Source Analysis Dashboard', fontsize=18, fontweight='bold')
             
-            # Time series by source
+            # 1. Time series by source (top left)
+            ax1 = axes[0, 0]
             for i, col in enumerate(mail_source_cols):
                 source_name = col.replace('mail_', '').title()
-                color = COLORS.get(source_name.upper(), f'hsl({i*60}, 70%, 50%)')
+                color = COLORS.get(source_name.upper(), plt.cm.Set3(i))
                 
-                fig.add_trace(
-                    go.Scatter(
-                        x=self.combined_data['date'],
-                        y=self.combined_data[col],
-                        name=f'{source_name}',
-                        line=dict(color=color, width=2),
-                        mode='lines'
-                    ),
-                    row=1, col=1
-                )
+                ax1.plot(self.combined_data['date'], self.combined_data[col],
+                        label=source_name, linewidth=2.5, color=color)
             
-            # Box plots for distribution
-            for i, col in enumerate(mail_source_cols):
-                source_name = col.replace('mail_', '').title()
-                source_data = self.combined_data[self.combined_data[col] > 0][col]
-                
-                if len(source_data) > 0:
-                    fig.add_trace(
-                        go.Box(
-                            y=source_data,
-                            name=f'{source_name}',
-                            marker_color=COLORS.get(source_name.upper(), f'hsl({i*60}, 70%, 50%)')
-                        ),
-                        row=1, col=2
-                    )
+            ax1.set_title('📧 Mail Volume by Source Over Time', fontweight='bold')
+            ax1.set_ylabel('Mail Volume')
+            ax1.legend()
+            ax1.tick_params(axis='x', rotation=45)
             
-            # Performance metrics
+            # 2. Source comparison bar chart (top right)
+            ax2 = axes[0, 1]
             if self.source_analysis:
                 sources = list(self.source_analysis.keys())
                 volumes = [self.source_analysis[s]['total_volume'] for s in sources]
                 colors = [COLORS.get(s.upper(), COLORS['primary']) for s in sources]
                 
-                fig.add_trace(
-                    go.Bar(
-                        x=sources,
-                        y=volumes,
-                        name='Total Volume',
-                        marker_color=colors,
-                        text=[f'{v:,.0f}' for v in volumes],
-                        textposition='outside'
-                    ),
-                    row=2, col=1
-                )
+                bars = ax2.bar(sources, volumes, color=colors, alpha=0.8, edgecolor='white')
+                ax2.set_title('📊 Total Volume by Source', fontweight='bold')
+                ax2.set_ylabel('Total Volume')
+                ax2.tick_params(axis='x', rotation=45)
+                
+                # Add value labels
+                for bar, value in zip(bars, volumes):
+                    ax2.text(bar.get_x() + bar.get_width()/2, bar.get_height() + max(volumes)*0.01,
+                            f'{value:,.0f}', ha='center', va='bottom', fontsize=10)
             
-            # Activity heatmap
-            if mail_source_cols and 'day_of_week' in self.combined_data.columns:
-                col = mail_source_cols[0]
+            # 3. Source distribution violin plot (bottom left)
+            ax3 = axes[1, 0]
+            source_data_list = []
+            source_labels = []
+            
+            for col in mail_source_cols:
                 source_name = col.replace('mail_', '').title()
-                
-                # Create day x week heatmap data
-                heatmap_data = self.combined_data.pivot_table(
-                    index=self.combined_data['date'].dt.isocalendar().week,
-                    columns='day_of_week',
-                    values=col,
-                    aggfunc='mean',
-                    fill_value=0
-                ).iloc[-12:]  # Last 12 weeks
-                
-                fig.add_trace(
-                    go.Heatmap(
-                        z=heatmap_data.values,
-                        x=['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
-                        y=[f'W{w}' for w in heatmap_data.index],
-                        colorscale='Blues',
-                        name=f'{source_name} Activity'
-                    ),
-                    row=2, col=2
-                )
+                source_values = self.combined_data[self.combined_data[col] > 0][col]
+                if len(source_values) > 0:
+                    source_data_list.append(source_values)
+                    source_labels.append(source_name)
             
-            fig.update_layout(
-                height=900,
-                title="🎯 Source Analysis Dashboard",
-                template='plotly_white'
-            )
+            if source_data_list:
+                parts = ax3.violinplot(source_data_list, positions=range(len(source_labels)))
+                
+                # Color the violin plots
+                for i, pc in enumerate(parts['bodies']):
+                    source_name = source_labels[i]
+                    color = COLORS.get(source_name.upper(), COLORS['primary'])
+                    pc.set_facecolor(color)
+                    pc.set_alpha(0.7)
+                
+                ax3.set_xticks(range(len(source_labels)))
+                ax3.set_xticklabels(source_labels, rotation=45)
+                ax3.set_title('📈 Source Volume Distribution', fontweight='bold')
+                ax3.set_ylabel('Mail Volume')
             
-            saved_path = self._save_plot_with_fallbacks(fig, 'source_analysis', 'Source Analysis')
-            return saved_path is not None
+            # 4. Source correlation with calls (bottom right)
+            ax4 = axes[1, 1]
+            if 'call_count' in self.combined_data.columns:
+                correlations = []
+                source_names = []
+                
+                for col in mail_source_cols:
+                    source_name = col.replace('mail_', '').title()
+                    valid_mask = (self.combined_data[col] > 0) & (self.combined_data['call_count'] > 0)
+                    
+                    if valid_mask.sum() > 10:
+                        try:
+                            corr = self.combined_data.loc[valid_mask, col].corr(
+                                self.combined_data.loc[valid_mask, 'call_count']
+                            )
+                            correlations.append(corr)
+                            source_names.append(source_name)
+                        except:
+                            continue
+                
+                if correlations:
+                    colors = [COLORS.get(name.upper(), COLORS['info']) for name in source_names]
+                    bars = ax4.bar(source_names, correlations, color=colors, alpha=0.8)
+                    
+                    ax4.set_title('🔗 Source-Call Correlations', fontweight='bold')
+                    ax4.set_ylabel('Correlation Coefficient')
+                    ax4.tick_params(axis='x', rotation=45)
+                    ax4.axhline(y=0, color='black', linestyle='-', alpha=0.3)
+                    
+                    # Add value labels
+                    for bar, value in zip(bars, correlations):
+                        y_pos = value + (0.02 if value >= 0 else -0.05)
+                        ax4.text(bar.get_x() + bar.get_width()/2, y_pos,
+                                f'{value:.3f}', ha='center', va='bottom' if value >= 0 else 'top',
+                                fontsize=10)
+            
+            plt.tight_layout()
+            return self._save_plot(fig, 'source_analysis', 'Source Analysis')
             
         except Exception as e:
-            logger.error(f"Source plots error: {e}")
+            print(f"❌ Source plots error: {e}")
             return False
     
     def _create_model_plots(self):
-        """Create model performance plots."""
+        """Create model performance analysis."""
         try:
             if not self.evaluation_results:
-                logger.warning("No evaluation results available")
+                print("⚠️ No evaluation results available")
                 return False
             
             models = self.evaluation_results[:8]  # Top 8 models
             
-            fig = make_subplots(
-                rows=2, cols=2,
-                subplot_titles=(
-                    '📏 Mean Absolute Error (Lower = Better)',
-                    '📐 R-Squared Score (Higher = Better)',
-                    '🎯 MAPE Percentage (Lower = Better)',
-                    '🤖 Model Type Distribution'
-                )
-            )
+            fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+            fig.suptitle('🤖 Model Performance Analysis', fontsize=18, fontweight='bold')
             
             # Extract data
             names = [m['name'] for m in models]
@@ -1080,74 +655,57 @@ class RobustAnalyticsPlotter:
             mape_vals = [m['mape'] for m in models]
             types = [m.get('type', 'unknown') for m in models]
             
-            # MAE comparison
-            fig.add_trace(
-                go.Bar(
-                    x=names,
-                    y=mae_vals,
-                    name='MAE',
-                    marker_color=COLORS['danger'],
-                    text=[f'{v:.1f}' for v in mae_vals],
-                    textposition='outside'
-                ),
-                row=1, col=1
-            )
+            # 1. MAE comparison (top left)
+            ax1 = axes[0, 0]
+            bars1 = ax1.barh(names, mae_vals, color=COLORS['danger'], alpha=0.8)
+            ax1.set_title('📏 Mean Absolute Error (Lower = Better)', fontweight='bold')
+            ax1.set_xlabel('MAE')
             
-            # R² comparison
-            fig.add_trace(
-                go.Bar(
-                    x=names,
-                    y=r2_vals,
-                    name='R²',
-                    marker_color=COLORS['success'],
-                    text=[f'{v:.3f}' for v in r2_vals],
-                    textposition='outside'
-                ),
-                row=1, col=2
-            )
+            # Add value labels
+            for bar, value in zip(bars1, mae_vals):
+                ax1.text(bar.get_width() + max(mae_vals)*0.01, bar.get_y() + bar.get_height()/2,
+                        f'{value:.1f}', ha='left', va='center', fontsize=9)
             
-            # MAPE comparison
-            fig.add_trace(
-                go.Bar(
-                    x=names,
-                    y=mape_vals,
-                    name='MAPE %',
-                    marker_color=COLORS['warning'],
-                    text=[f'{v:.1f}%' for v in mape_vals],
-                    textposition='outside'
-                ),
-                row=2, col=1
-            )
+            # 2. R² comparison (top right)
+            ax2 = axes[0, 1]
+            bars2 = ax2.barh(names, r2_vals, color=COLORS['success'], alpha=0.8)
+            ax2.set_title('📐 R-Squared Score (Higher = Better)', fontweight='bold')
+            ax2.set_xlabel('R² Score')
             
-            # Model type pie chart
+            # Add value labels
+            for bar, value in zip(bars2, r2_vals):
+                ax2.text(bar.get_width() + max(r2_vals)*0.01, bar.get_y() + bar.get_height()/2,
+                        f'{value:.3f}', ha='left', va='center', fontsize=9)
+            
+            # 3. MAPE comparison (bottom left)
+            ax3 = axes[1, 0]
+            bars3 = ax3.barh(names, mape_vals, color=COLORS['warning'], alpha=0.8)
+            ax3.set_title('🎯 MAPE Percentage (Lower = Better)', fontweight='bold')
+            ax3.set_xlabel('MAPE %')
+            
+            # Add value labels
+            for bar, value in zip(bars3, mape_vals):
+                ax3.text(bar.get_width() + max(mape_vals)*0.01, bar.get_y() + bar.get_height()/2,
+                        f'{value:.1f}%', ha='left', va='center', fontsize=9)
+            
+            # 4. Model type distribution (bottom right)
+            ax4 = axes[1, 1]
             type_counts = {}
             for t in types:
                 type_counts[t] = type_counts.get(t, 0) + 1
             
-            fig.add_trace(
-                go.Pie(
-                    labels=list(type_counts.keys()),
-                    values=list(type_counts.values()),
-                    name="Model Types",
-                    marker_colors=[COLORS['primary'], COLORS['secondary'], COLORS['success'], COLORS['info']]
-                ),
-                row=2, col=2
-            )
+            colors_pie = [COLORS['primary'], COLORS['secondary'], COLORS['success'], COLORS['info']]
+            wedges, texts, autotexts = ax4.pie(type_counts.values(), 
+                                              labels=type_counts.keys(),
+                                              colors=colors_pie[:len(type_counts)],
+                                              autopct='%1.1f%%', startangle=90)
+            ax4.set_title('🏷️ Model Type Distribution', fontweight='bold')
             
-            fig.update_layout(
-                height=900,
-                title="🤖 Model Performance Dashboard",
-                template='plotly_white'
-            )
-            
-            # Rotate x-axis labels for readability
-            fig.update_xaxes(tickangle=45)
-            
-            saved_path = self._save_plot_with_fallbacks(fig, 'model_performance', 'Model Performance')
-            return saved_path is not None
+            plt.tight_layout()
+            return self._save_plot(fig, 'model_performance', 'Model Performance')
             
         except Exception as e:
-            logger.error(f"Model plots error: {e}")
+            print(f"❌ Model plots error: {e}")
             return False
     
     def _create_correlation_plots(self):
@@ -1156,17 +714,11 @@ class RobustAnalyticsPlotter:
             if self.combined_data is None:
                 return False
             
-            fig = make_subplots(
-                rows=2, cols=2,
-                subplot_titles=(
-                    '🔗 Mail vs Calls Scatter Plot',
-                    '⏰ Lag Correlation Analysis',
-                    '🎯 Source Correlations',
-                    '📅 Weekly Pattern Correlation'
-                )
-            )
+            fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+            fig.suptitle('🔗 Correlation Analysis Dashboard', fontsize=18, fontweight='bold')
             
-            # Scatter plot: Mail vs Calls
+            # 1. Mail vs Calls scatter plot (top left)
+            ax1 = axes[0, 0]
             if 'mail_volume_total' in self.combined_data.columns and 'call_count' in self.combined_data.columns:
                 valid_data = self.combined_data[
                     (self.combined_data['mail_volume_total'] > 0) & 
@@ -1174,116 +726,133 @@ class RobustAnalyticsPlotter:
                 ]
                 
                 if len(valid_data) > 0:
-                    fig.add_trace(
-                        go.Scatter(
-                            x=valid_data['mail_volume_total'],
-                            y=valid_data['call_count'],
-                            mode='markers',
-                            name='Mail vs Calls',
-                            marker=dict(
-                                color=COLORS['primary'],
-                                size=8,
-                                opacity=0.6,
-                                line=dict(width=1, color='white')
-                            )
-                        ),
-                        row=1, col=1
-                    )
+                    # Scatter plot
+                    scatter = ax1.scatter(valid_data['mail_volume_total'], 
+                                        valid_data['call_count'],
+                                        c=COLORS['primary'], alpha=0.6, s=50, edgecolors='white')
                     
                     # Add trend line
                     try:
                         z = np.polyfit(valid_data['mail_volume_total'], valid_data['call_count'], 1)
                         p = np.poly1d(z)
-                        fig.add_trace(
-                            go.Scatter(
-                                x=valid_data['mail_volume_total'],
-                                y=p(valid_data['mail_volume_total']),
-                                mode='lines',
-                                name='Trend Line',
-                                line=dict(color=COLORS['danger'], width=2, dash='dash')
-                            ),
-                            row=1, col=1
-                        )
+                        ax1.plot(valid_data['mail_volume_total'], 
+                                p(valid_data['mail_volume_total']),
+                                color=COLORS['danger'], linestyle='--', linewidth=2)
+                        
+                        # Calculate and display correlation
+                        corr = valid_data['mail_volume_total'].corr(valid_data['call_count'])
+                        ax1.text(0.05, 0.95, f'r = {corr:.3f}', transform=ax1.transAxes,
+                                bbox=dict(boxstyle='round', facecolor='white', alpha=0.8),
+                                fontsize=12, fontweight='bold')
                     except:
-                        pass  # Skip trend line if calculation fails
+                        pass
+                    
+                    ax1.set_title('📧📞 Mail vs Calls Relationship', fontweight='bold')
+                    ax1.set_xlabel('Mail Volume')
+                    ax1.set_ylabel('Call Count')
             
-            # Lag correlation
+            # 2. Lag correlation analysis (top right)
+            ax2 = axes[0, 1]
             if self.correlation_data is not None:
-                fig.add_trace(
-                    go.Bar(
-                        x=self.correlation_data['lag'],
-                        y=self.correlation_data['correlation'],
-                        name='Lag Correlation',
-                        marker_color=COLORS['success'],
-                        text=[f'{c:.3f}' for c in self.correlation_data['correlation']],
-                        textposition='outside'
-                    ),
-                    row=1, col=2
-                )
+                bars = ax2.bar(self.correlation_data['lag'], 
+                              self.correlation_data['correlation'],
+                              color=COLORS['success'], alpha=0.8, edgecolor='white')
+                
+                ax2.set_title('⏰ Lag Correlation Analysis', fontweight='bold')
+                ax2.set_xlabel('Lag (days)')
+                ax2.set_ylabel('Correlation Coefficient')
+                ax2.axhline(y=0, color='black', linestyle='-', alpha=0.3)
+                
+                # Highlight best correlation
+                best_idx = np.argmax(np.abs(self.correlation_data['correlation']))
+                bars[best_idx].set_color(COLORS['danger'])
+                
+                # Add value labels for significant correlations
+                for bar, value in zip(bars, self.correlation_data['correlation']):
+                    if abs(value) > 0.1:  # Only label significant correlations
+                        y_pos = value + (0.02 if value >= 0 else -0.05)
+                        ax2.text(bar.get_x() + bar.get_width()/2, y_pos,
+                                f'{value:.3f}', ha='center', 
+                                va='bottom' if value >= 0 else 'top', fontsize=9)
             
-            # Source correlations
+            # 3. Source correlations (bottom left)
+            ax3 = axes[1, 0]
             mail_source_cols = [col for col in self.combined_data.columns 
                                if col.startswith('mail_') and col != 'mail_volume_total']
             
             if mail_source_cols and 'call_count' in self.combined_data.columns:
-                source_corrs = {}
+                source_corrs = []
+                source_names = []
+                
                 for col in mail_source_cols:
                     source_name = col.replace('mail_', '').title()
                     valid_mask = (self.combined_data[col] > 0) & (self.combined_data['call_count'] > 0)
+                    
                     if valid_mask.sum() > 10:
                         try:
                             corr = self.combined_data.loc[valid_mask, col].corr(
                                 self.combined_data.loc[valid_mask, 'call_count']
                             )
-                            source_corrs[source_name] = corr
+                            source_corrs.append(corr)
+                            source_names.append(source_name)
                         except:
-                            pass
+                            continue
                 
                 if source_corrs:
-                    sources = list(source_corrs.keys())
-                    correlations = list(source_corrs.values())
-                    colors = [COLORS.get(s.upper(), COLORS['info']) for s in sources]
+                    colors = [COLORS.get(name.upper(), COLORS['info']) for name in source_names]
+                    bars = ax3.bar(source_names, source_corrs, color=colors, alpha=0.8, edgecolor='white')
                     
-                    fig.add_trace(
-                        go.Bar(
-                            x=sources,
-                            y=correlations,
-                            name='Source Correlation',
-                            marker_color=colors,
-                            text=[f'{c:.3f}' for c in correlations],
-                            textposition='outside'
-                        ),
-                        row=2, col=1
-                    )
+                    ax3.set_title('🎯 Source-Call Correlations', fontweight='bold')
+                    ax3.set_ylabel('Correlation Coefficient')
+                    ax3.tick_params(axis='x', rotation=45)
+                    ax3.axhline(y=0, color='black', linestyle='-', alpha=0.3)
+                    
+                    # Add value labels
+                    for bar, value in zip(bars, source_corrs):
+                        y_pos = value + (0.02 if value >= 0 else -0.05)
+                        ax3.text(bar.get_x() + bar.get_width()/2, y_pos,
+                                f'{value:.3f}', ha='center', 
+                                va='bottom' if value >= 0 else 'top', fontsize=10)
             
-            # Day-of-week pattern
-            if 'day_of_week' in self.combined_data.columns and 'call_count' in self.combined_data.columns:
-                dow_names = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
-                dow_calls = self.combined_data.groupby('day_of_week')['call_count'].mean()
+            # 4. Correlation heatmap (bottom right)
+            ax4 = axes[1, 1]
+            
+            # Create correlation matrix for numerical columns
+            numeric_cols = self.combined_data.select_dtypes(include=[np.number]).columns
+            corr_cols = [col for col in numeric_cols if col not in ['day_of_week', 'week', 'month', 'quarter']]
+            
+            if len(corr_cols) > 1:
+                corr_matrix = self.combined_data[corr_cols].corr()
                 
-                fig.add_trace(
-                    go.Bar(
-                        x=dow_names,
-                        y=dow_calls.values,
-                        name='Avg Calls by Day',
-                        marker_color=COLORS['warning'],
-                        text=[f'{v:.0f}' for v in dow_calls.values],
-                        textposition='outside'
-                    ),
-                    row=2, col=2
-                )
+                # Create heatmap
+                im = ax4.imshow(corr_matrix.values, cmap='RdBu_r', aspect='auto', vmin=-1, vmax=1)
+                
+                # Set ticks and labels
+                ax4.set_xticks(range(len(corr_cols)))
+                ax4.set_yticks(range(len(corr_cols)))
+                ax4.set_xticklabels([col.replace('_', '\n').replace('mail ', '') for col in corr_cols], 
+                                   rotation=45, ha='right')
+                ax4.set_yticklabels([col.replace('_', '\n').replace('mail ', '') for col in corr_cols])
+                
+                # Add correlation values as text
+                for i in range(len(corr_cols)):
+                    for j in range(len(corr_cols)):
+                        value = corr_matrix.iloc[i, j]
+                        color = 'white' if abs(value) > 0.5 else 'black'
+                        ax4.text(j, i, f'{value:.2f}', ha='center', va='center', 
+                                color=color, fontsize=8, fontweight='bold')
+                
+                ax4.set_title('🌡️ Correlation Heatmap', fontweight='bold')
+                
+                # Add colorbar
+                cbar = plt.colorbar(im, ax=ax4, shrink=0.8)
+                cbar.set_label('Correlation Coefficient')
             
-            fig.update_layout(
-                height=900,
-                title="🔗 Correlation Analysis Dashboard",
-                template='plotly_white'
-            )
-            
-            saved_path = self._save_plot_with_fallbacks(fig, 'correlation_analysis', 'Correlation Analysis')
-            return saved_path is not None
+            plt.tight_layout()
+            return self._save_plot(fig, 'correlation_analysis', 'Correlation Analysis')
             
         except Exception as e:
-            logger.error(f"Correlation plots error: {e}")
+            print(f"❌ Correlation plots error: {e}")
             return False
     
     def _create_quality_plots(self):
@@ -1292,49 +861,32 @@ class RobustAnalyticsPlotter:
             if self.combined_data is None:
                 return False
             
-            fig = make_subplots(
-                rows=2, cols=2,
-                subplot_titles=(
-                    '✅ Data Quality Over Time',
-                    '📊 Missing Data Analysis',
-                    '🎯 Completeness by Source',
-                    '📈 Quality Score'
-                ),
-                specs=[
-                    [{'type': 'scatter'}, {'type': 'bar'}],
-                    [{'type': 'bar'}, {'type': 'indicator'}]
-                ]
-            )
+            fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+            fig.suptitle('🔍 Data Quality Assessment', fontsize=18, fontweight='bold')
             
-            # Data quality over time
+            # 1. Data quality over time (top left)
+            ax1 = axes[0, 0]
             if 'data_quality' in self.combined_data.columns:
-                quality_counts = self.combined_data.groupby(['date', 'data_quality']).size().unstack(fill_value=0)
+                # Group by date and quality
+                quality_pivot = self.combined_data.groupby(['date', 'data_quality']).size().unstack(fill_value=0)
                 
-                if 'actual' in quality_counts.columns:
-                    fig.add_trace(
-                        go.Scatter(
-                            x=quality_counts.index,
-                            y=quality_counts['actual'],
-                            name='Actual Data',
-                            line=dict(color=COLORS['success'], width=2),
-                            stackgroup='one'
-                        ),
-                        row=1, col=1
-                    )
+                if 'actual' in quality_pivot.columns:
+                    ax1.fill_between(quality_pivot.index, 0, quality_pivot['actual'],
+                                   color=COLORS['success'], alpha=0.8, label='Actual Data')
                 
-                if 'augmented' in quality_counts.columns:
-                    fig.add_trace(
-                        go.Scatter(
-                            x=quality_counts.index,
-                            y=quality_counts['augmented'],
-                            name='Augmented Data',
-                            line=dict(color=COLORS['warning'], width=2),
-                            stackgroup='one'
-                        ),
-                        row=1, col=1
-                    )
+                if 'augmented' in quality_pivot.columns:
+                    bottom = quality_pivot.get('actual', 0)
+                    ax1.fill_between(quality_pivot.index, bottom, 
+                                   bottom + quality_pivot['augmented'],
+                                   color=COLORS['warning'], alpha=0.8, label='Augmented Data')
+                
+                ax1.set_title('✅ Data Quality Over Time', fontweight='bold')
+                ax1.set_ylabel('Number of Records')
+                ax1.legend()
+                ax1.tick_params(axis='x', rotation=45)
             
-            # Missing data analysis
+            # 2. Missing data analysis (top right)
+            ax2 = axes[0, 1]
             missing_data = {}
             for col in ['mail_volume_total', 'call_count']:
                 if col in self.combined_data.columns:
@@ -1342,19 +894,19 @@ class RobustAnalyticsPlotter:
                     missing_data[col.replace('_', ' ').title()] = missing_pct
             
             if missing_data:
-                fig.add_trace(
-                    go.Bar(
-                        x=list(missing_data.keys()),
-                        y=list(missing_data.values()),
-                        name='Missing %',
-                        marker_color=COLORS['danger'],
-                        text=[f'{v:.1f}%' for v in missing_data.values()],
-                        textposition='outside'
-                    ),
-                    row=1, col=2
-                )
+                bars = ax2.bar(list(missing_data.keys()), list(missing_data.values()),
+                              color=[COLORS['danger'], COLORS['warning']], alpha=0.8, edgecolor='white')
+                ax2.set_title('📊 Missing Data Analysis', fontweight='bold')
+                ax2.set_ylabel('Missing Data %')
+                ax2.tick_params(axis='x', rotation=45)
+                
+                # Add value labels
+                for bar, value in zip(bars, missing_data.values()):
+                    ax2.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 1,
+                            f'{value:.1f}%', ha='center', va='bottom', fontsize=10)
             
-            # Completeness by source
+            # 3. Data completeness by source (bottom left)
+            ax3 = axes[1, 0]
             mail_source_cols = [col for col in self.combined_data.columns 
                                if col.startswith('mail_') and col != 'mail_volume_total']
             
@@ -1369,68 +921,91 @@ class RobustAnalyticsPlotter:
                 completeness = list(source_completeness.values())
                 colors = [COLORS.get(s.upper(), COLORS['info']) for s in sources]
                 
-                fig.add_trace(
-                    go.Bar(
-                        x=sources,
-                        y=completeness,
-                        name='Completeness %',
-                        marker_color=colors,
-                        text=[f'{v:.1f}%' for v in completeness],
-                        textposition='outside'
-                    ),
-                    row=2, col=1
-                )
+                bars = ax3.bar(sources, completeness, color=colors, alpha=0.8, edgecolor='white')
+                ax3.set_title('🎯 Completeness by Source', fontweight='bold')
+                ax3.set_ylabel('Completeness %')
+                ax3.tick_params(axis='x', rotation=45)
+                ax3.set_ylim(0, 100)
+                
+                # Add value labels
+                for bar, value in zip(bars, completeness):
+                    ax3.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 1,
+                            f'{value:.1f}%', ha='center', va='bottom', fontsize=10)
+                
+                # Add quality threshold line
+                ax3.axhline(y=90, color=COLORS['danger'], linestyle='--', alpha=0.7, 
+                           label='Quality Threshold (90%)')
+                ax3.legend()
             
-            # Overall quality score
+            # 4. Data quality gauge (bottom right)
+            ax4 = axes[1, 1]
+            ax4.set_xlim(-1.5, 1.5)
+            ax4.set_ylim(-1.5, 1.5)
+            ax4.set_aspect('equal')
+            
+            # Calculate overall quality score
             overall_quality = 100
             if 'data_quality' in self.combined_data.columns:
                 overall_quality = (self.combined_data['data_quality'] == 'actual').mean() * 100
             
-            fig.add_trace(
-                go.Indicator(
-                    mode="gauge+number+delta",
-                    value=overall_quality,
-                    delta={'reference': 90},
-                    title={'text': "Overall Data Quality Score"},
-                    gauge={
-                        'axis': {'range': [0, 100]},
-                        'bar': {'color': COLORS['success']},
-                        'steps': [
-                            {'range': [0, 50], 'color': '#ffebee'},
-                            {'range': [50, 80], 'color': '#fff3e0'},
-                            {'range': [80, 100], 'color': '#e8f5e9'}
-                        ],
-                        'threshold': {
-                            'line': {'color': COLORS['warning'], 'width': 4},
-                            'thickness': 0.75,
-                            'value': 90
-                        }
-                    }
-                ),
-                row=2, col=2
-            )
+            # Create gauge
+            theta = np.linspace(0, np.pi, 100)
             
-            fig.update_layout(
-                height=900,
-                title="🔍 Data Quality Dashboard",
-                template='plotly_white'
-            )
+            # Background arc
+            ax4.plot(np.cos(theta), np.sin(theta), color='lightgray', linewidth=20, alpha=0.3)
             
-            saved_path = self._save_plot_with_fallbacks(fig, 'data_quality', 'Data Quality')
-            return saved_path is not None
+            # Quality arc
+            quality_theta = np.linspace(0, np.pi * (overall_quality / 100), 100)
+            
+            if overall_quality >= 90:
+                color = COLORS['success']
+            elif overall_quality >= 70:
+                color = COLORS['warning']
+            else:
+                color = COLORS['danger']
+            
+            ax4.plot(np.cos(quality_theta), np.sin(quality_theta), 
+                    color=color, linewidth=20, alpha=0.8)
+            
+            # Add pointer
+            pointer_angle = np.pi * (overall_quality / 100)
+            ax4.arrow(0, 0, 0.8*np.cos(pointer_angle), 0.8*np.sin(pointer_angle),
+                     head_width=0.1, head_length=0.1, fc='black', ec='black')
+            
+            # Add labels
+            ax4.text(0, -0.3, f'{overall_quality:.1f}%', ha='center', va='center',
+                    fontsize=24, fontweight='bold', color=color)
+            ax4.text(0, -0.6, 'Data Quality Score', ha='center', va='center',
+                    fontsize=12, fontweight='bold')
+            
+            # Add scale labels
+            for i, label in enumerate(['0%', '50%', '100%']):
+                angle = np.pi * (i / 2)
+                x, y = 1.2 * np.cos(angle), 1.2 * np.sin(angle)
+                ax4.text(x, y, label, ha='center', va='center', fontsize=10)
+            
+            ax4.set_title('📈 Overall Quality Score', fontweight='bold')
+            ax4.axis('off')
+            
+            plt.tight_layout()
+            return self._save_plot(fig, 'data_quality', 'Data Quality')
             
         except Exception as e:
-            logger.error(f"Quality plots error: {e}")
+            print(f"❌ Quality plots error: {e}")
             return False
     
     def _create_forecast_plots(self):
         """Create forecast visualization."""
         try:
             if self.forecast_data is None or self.combined_data is None:
-                logger.warning("No forecast data available")
+                print("⚠️ No forecast data available")
                 return False
             
-            fig = go.Figure()
+            fig, axes = plt.subplots(2, 1, figsize=(14, 10))
+            fig.suptitle('🔮 Call Volume Forecast Analysis', fontsize=18, fontweight='bold')
+            
+            # 1. Main forecast plot (top)
+            ax1 = axes[0]
             
             # Historical data (last 60 days)
             recent_data = self.combined_data.tail(60)
@@ -1438,310 +1013,611 @@ class RobustAnalyticsPlotter:
             # Actual historical data
             actual_recent = recent_data[recent_data.get('data_quality', 'actual') == 'actual']
             if len(actual_recent) > 0:
-                fig.add_trace(go.Scatter(
-                    x=actual_recent['date'],
-                    y=actual_recent['call_count'],
-                    mode='lines+markers',
-                    name='Historical (Actual)',
-                    line=dict(color=COLORS['success'], width=3),
-                    marker=dict(size=6)
-                ))
+                ax1.plot(actual_recent['date'], actual_recent['call_count'],
+                        color=COLORS['success'], linewidth=3, marker='o', markersize=4,
+                        label='Historical (Actual)', alpha=0.8)
             
             # Augmented historical data
             augmented_recent = recent_data[recent_data.get('data_quality', 'none') == 'augmented']
             if len(augmented_recent) > 0:
-                fig.add_trace(go.Scatter(
-                    x=augmented_recent['date'],
-                    y=augmented_recent['call_count'],
-                    mode='lines+markers',
-                    name='Historical (Augmented)',
-                    line=dict(color=COLORS['warning'], width=2, dash='dot'),
-                    marker=dict(size=4, symbol='diamond'),
-                    opacity=0.7
-                ))
+                ax1.plot(augmented_recent['date'], augmented_recent['call_count'],
+                        color=COLORS['warning'], linewidth=2, linestyle='--',
+                        marker='s', markersize=3, label='Historical (Augmented)', alpha=0.7)
             
             # Forecast line
-            fig.add_trace(go.Scatter(
-                x=self.forecast_data['date'],
-                y=self.forecast_data['predicted_calls'],
-                mode='lines+markers',
-                name='Forecast',
-                line=dict(color=COLORS['forecast'], width=4, dash='dash'),
-                marker=dict(size=8, symbol='diamond')
-            ))
+            ax1.plot(self.forecast_data['date'], self.forecast_data['predicted_calls'],
+                    color=COLORS['forecast'], linewidth=4, linestyle='-.', 
+                    marker='D', markersize=5, label='Forecast')
             
             # Confidence interval (if available)
             if 'upper_bound' in self.forecast_data.columns and 'lower_bound' in self.forecast_data.columns:
-                fig.add_trace(go.Scatter(
-                    x=self.forecast_data['date'].tolist() + self.forecast_data['date'].tolist()[::-1],
-                    y=self.forecast_data['upper_bound'].tolist() + self.forecast_data['lower_bound'].tolist()[::-1],
-                    fill='toself',
-                    fillcolor=COLORS['confidence'],
-                    line=dict(color='rgba(255,255,255,0)'),
-                    name='95% Confidence Interval',
-                    showlegend=True
-                ))
+                ax1.fill_between(self.forecast_data['date'],
+                               self.forecast_data['lower_bound'],
+                               self.forecast_data['upper_bound'],
+                               color=COLORS['forecast'], alpha=0.2, label='Confidence Interval')
             
             # Add vertical line at forecast start
             last_date = self.combined_data['date'].max()
-            fig.add_vline(
-                x=last_date,
-                line_dash="dot",
-                line_color="gray",
-                annotation_text="Forecast Start",
-                annotation_position="top"
-            )
+            ax1.axvline(x=last_date, color='gray', linestyle=':', alpha=0.7, linewidth=2)
+            ax1.text(last_date, ax1.get_ylim()[1] * 0.9, 'Forecast Start',
+                    rotation=90, ha='right', va='top', fontsize=10,
+                    bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8))
             
-            # Calculate stats
+            ax1.set_title('📈 Historical Data and Forecast', fontweight='bold')
+            ax1.set_ylabel('Call Volume')
+            ax1.legend(loc='upper left')
+            ax1.tick_params(axis='x', rotation=45)
+            ax1.grid(True, alpha=0.3)
+            
+            # 2. Forecast statistics (bottom)
+            ax2 = axes[1]
+            
+            # Calculate forecast statistics
+            forecast_stats = {
+                'Average': self.forecast_data['predicted_calls'].mean(),
+                'Minimum': self.forecast_data['predicted_calls'].min(),
+                'Maximum': self.forecast_data['predicted_calls'].max(),
+                'Std Dev': self.forecast_data['predicted_calls'].std(),
+                'Total': self.forecast_data['predicted_calls'].sum()
+            }
+            
+            # Create bar chart of forecast statistics
+            stats_names = list(forecast_stats.keys())
+            stats_values = list(forecast_stats.values())
+            
+            bars = ax2.bar(stats_names, stats_values, 
+                          color=[COLORS['primary'], COLORS['danger'], COLORS['success'], 
+                                COLORS['warning'], COLORS['info']], 
+                          alpha=0.8, edgecolor='white')
+            
+            ax2.set_title('📊 Forecast Statistics', fontweight='bold')
+            ax2.set_ylabel('Call Volume')
+            
+            # Add value labels on bars
+            for bar, value in zip(bars, stats_values):
+                ax2.text(bar.get_x() + bar.get_width()/2, bar.get_height() + max(stats_values)*0.01,
+                        f'{value:.0f}', ha='center', va='bottom', fontsize=11, fontweight='bold')
+            
+            # Add forecast period info
+            forecast_period = len(self.forecast_data)
             avg_forecast = self.forecast_data['predicted_calls'].mean()
             
-            fig.update_layout(
-                title={
-                    'text': f"🔮 Call Volume Forecast<br><sub>Average forecast: {avg_forecast:.0f} calls/day</sub>",
-                    'x': 0.5,
-                    'font': {'size': 20}
-                },
-                xaxis_title='Date',
-                yaxis_title='Call Volume',
-                height=700,
-                template='plotly_white',
-                hovermode='x unified'
-            )
+            ax2.text(0.02, 0.98, f'Forecast Period: {forecast_period} days\nAverage Daily Forecast: {avg_forecast:.0f} calls',
+                    transform=ax2.transAxes, va='top', ha='left',
+                    bbox=dict(boxstyle='round,pad=0.5', facecolor=COLORS['light'], alpha=0.8),
+                    fontsize=11)
             
-            saved_path = self._save_plot_with_fallbacks(fig, 'forecast_visualization', 'Forecast')
-            return saved_path is not None
+            plt.tight_layout()
+            return self._save_plot(fig, 'forecast_visualization', 'Forecast')
             
         except Exception as e:
-            logger.error(f"Forecast plots error: {e}")
+            print(f"❌ Forecast plots error: {e}")
             return False
     
-    def _create_sample_visualizations(self):
-        """Create sample visualizations when no data is available."""
-        logger.info("📊 Creating sample visualizations...")
+    def _create_statistical_plots(self):
+        """Create advanced statistical analysis plots."""
+        try:
+            if self.combined_data is None:
+                return False
+            
+            fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+            fig.suptitle('📊 Statistical Analysis Dashboard', fontsize=18, fontweight='bold')
+            
+            # 1. Distribution analysis (top left)
+            ax1 = axes[0, 0]
+            if 'call_count' in self.combined_data.columns:
+                call_data = self.combined_data[self.combined_data['call_count'] > 0]['call_count']
+                
+                # Histogram
+                n, bins, patches = ax1.hist(call_data, bins=30, alpha=0.7, 
+                                          color=COLORS['primary'], edgecolor='white')
+                
+                # Overlay normal distribution curve
+                mu, sigma = call_data.mean(), call_data.std()
+                x = np.linspace(call_data.min(), call_data.max(), 100)
+                y = ((1/(np.sqrt(2*np.pi)*sigma)) * np.exp(-0.5*((x-mu)/sigma)**2)) * len(call_data) * (bins[1]-bins[0])
+                ax1.plot(x, y, color=COLORS['danger'], linewidth=2, label=f'Normal (μ={mu:.1f}, σ={sigma:.1f})')
+                
+                ax1.set_title('📈 Call Volume Distribution', fontweight='bold')
+                ax1.set_xlabel('Call Count')
+                ax1.set_ylabel('Frequency')
+                ax1.legend()
+                ax1.grid(True, alpha=0.3)
+            
+            # 2. Monthly trends (top right)
+            ax2 = axes[0, 1]
+            if 'month' in self.combined_data.columns and 'call_count' in self.combined_data.columns:
+                monthly_stats = self.combined_data.groupby('month')['call_count'].agg(['mean', 'std'])
+                month_names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                              'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+                
+                # Line plot with error bars
+                ax2.errorbar(monthly_stats.index, monthly_stats['mean'], 
+                           yerr=monthly_stats['std'], marker='o', linewidth=2,
+                           color=COLORS['secondary'], capsize=5, capthick=2,
+                           markersize=8, alpha=0.8)
+                
+                ax2.set_title('📅 Monthly Trends with Variability', fontweight='bold')
+                ax2.set_xlabel('Month')
+                ax2.set_ylabel('Average Call Count')
+                ax2.set_xticks(range(1, 13))
+                ax2.set_xticklabels([month_names[i-1] for i in monthly_stats.index])
+                ax2.grid(True, alpha=0.3)
+            
+            # 3. Outlier analysis (bottom left)
+            ax3 = axes[1, 0]
+            if 'call_count' in self.combined_data.columns:
+                call_data = self.combined_data['call_count']
+                
+                # Box plot
+                bp = ax3.boxplot(call_data, patch_artist=True, widths=0.6)
+                bp['boxes'][0].set_facecolor(COLORS['info'])
+                bp['boxes'][0].set_alpha(0.7)
+                
+                # Calculate and highlight outliers
+                Q1 = call_data.quantile(0.25)
+                Q3 = call_data.quantile(0.75)
+                IQR = Q3 - Q1
+                lower_bound = Q1 - 1.5 * IQR
+                upper_bound = Q3 + 1.5 * IQR
+                
+                outliers = call_data[(call_data < lower_bound) | (call_data > upper_bound)]
+                
+                ax3.set_title(f'📦 Outlier Analysis ({len(outliers)} outliers)', fontweight='bold')
+                ax3.set_ylabel('Call Count')
+                ax3.set_xticklabels(['Call Volume'])
+                
+                # Add statistics text
+                stats_text = f'Q1: {Q1:.0f}\nMedian: {call_data.median():.0f}\nQ3: {Q3:.0f}\nIQR: {IQR:.0f}'
+                ax3.text(1.2, Q3, stats_text, va='center', ha='left',
+                        bbox=dict(boxstyle='round,pad=0.5', facecolor='white', alpha=0.8))
+            
+            # 4. Trend decomposition (bottom right)
+            ax4 = axes[1, 1]
+            if 'call_count' in self.combined_data.columns and len(self.combined_data) > 14:
+                # Simple trend analysis
+                call_data = self.combined_data['call_count'].values
+                
+                # Calculate rolling statistics
+                window = min(14, len(call_data) // 4)
+                rolling_mean = pd.Series(call_data).rolling(window, center=True).mean()
+                rolling_std = pd.Series(call_data).rolling(window, center=True).std()
+                
+                # Plot original data
+                ax4.plot(range(len(call_data)), call_data, 
+                        color=COLORS['light'], alpha=0.5, linewidth=1, label='Original')
+                
+                # Plot trend
+                ax4.plot(range(len(call_data)), rolling_mean, 
+                        color=COLORS['danger'], linewidth=3, label=f'Trend ({window}-day MA)')
+                
+                # Plot variability envelope
+                ax4.fill_between(range(len(call_data)), 
+                               rolling_mean - rolling_std, rolling_mean + rolling_std,
+                               color=COLORS['danger'], alpha=0.2, label='±1 Std Dev')
+                
+                ax4.set_title('📈 Trend Analysis', fontweight='bold')
+                ax4.set_xlabel('Days')
+                ax4.set_ylabel('Call Count')
+                ax4.legend()
+                ax4.grid(True, alpha=0.3)
+            
+            plt.tight_layout()
+            return self._save_plot(fig, 'statistical_analysis', 'Statistical Analysis')
+            
+        except Exception as e:
+            print(f"❌ Statistical plots error: {e}")
+            return False
+    
+    def _create_sample_plots(self):
+        """Create sample visualizations when no real data is available."""
+        print("📊 Creating sample visualizations...")
         
         try:
             # Generate sample data
             dates = pd.date_range('2024-01-01', periods=90, freq='D')
             np.random.seed(42)
             
-            mail_data = np.random.randint(100, 500, 90) + np.sin(np.arange(90) * 2 * np.pi / 7) * 50
-            call_data = mail_data * 0.3 + np.random.randint(-20, 20, 90)
+            # Create realistic sample data
+            base_mail = 200 + 50 * np.sin(np.arange(90) * 2 * np.pi / 7)  # Weekly pattern
+            mail_data = base_mail + np.random.normal(0, 30, 90)
+            mail_data = np.maximum(mail_data, 0)
+            
+            call_data = mail_data * 0.25 + np.random.normal(0, 15, 90)
             call_data = np.maximum(call_data, 0)
             
             # Create sample dashboard
-            fig = make_subplots(
-                rows=2, cols=2,
-                subplot_titles=(
-                    '📧 Sample Mail Volume',
-                    '📞 Sample Call Volume',
-                    '📊 Sample Weekly Pattern',
-                    '🎯 Sample Metrics'
-                )
-            )
+            fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+            fig.suptitle('📊 Sample Analytics Dashboard (No Real Data Available)', 
+                        fontsize=18, fontweight='bold')
             
-            # Mail volume
-            fig.add_trace(
-                go.Scatter(
-                    x=dates,
-                    y=mail_data,
-                    name='Mail Volume',
-                    line=dict(color=COLORS['primary'], width=3)
-                ),
-                row=1, col=1
-            )
+            # 1. Sample time series (top left)
+            ax1 = axes[0, 0]
+            ax1.plot(dates, mail_data, color=COLORS['primary'], linewidth=2.5, label='Sample Mail Volume')
+            ax1_twin = ax1.twinx()
+            ax1_twin.plot(dates, call_data, color=COLORS['success'], linewidth=2.5, 
+                         label='Sample Call Volume')
             
-            # Call volume
-            fig.add_trace(
-                go.Scatter(
-                    x=dates,
-                    y=call_data,
-                    name='Call Volume',
-                    line=dict(color=COLORS['success'], width=3)
-                ),
-                row=1, col=2
-            )
+            ax1.set_title('📧📞 Sample Mail & Call Volumes', fontweight='bold')
+            ax1.set_ylabel('Mail Volume', color=COLORS['primary'])
+            ax1_twin.set_ylabel('Call Volume', color=COLORS['success'])
+            ax1.tick_params(axis='x', rotation=45)
             
-            # Weekly pattern
-            weekly_pattern = [150, 180, 170, 165, 160, 120, 100]
+            # Combined legend
+            lines1, labels1 = ax1.get_legend_handles_labels()
+            lines2, labels2 = ax1_twin.get_legend_handles_labels()
+            ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper left')
+            
+            # 2. Sample correlation (top right)
+            ax2 = axes[0, 1]
+            scatter = ax2.scatter(mail_data, call_data, c=COLORS['primary'], 
+                                 alpha=0.6, s=50, edgecolors='white')
+            
+            # Add trend line
+            z = np.polyfit(mail_data, call_data, 1)
+            p = np.poly1d(z)
+            ax2.plot(mail_data, p(mail_data), color=COLORS['danger'], 
+                    linestyle='--', linewidth=2)
+            
+            # Calculate correlation
+            corr = np.corrcoef(mail_data, call_data)[0, 1]
+            ax2.text(0.05, 0.95, f'Correlation: {corr:.3f}', transform=ax2.transAxes,
+                    bbox=dict(boxstyle='round', facecolor='white', alpha=0.8),
+                    fontsize=12, fontweight='bold')
+            
+            ax2.set_title('🔗 Sample Correlation Analysis', fontweight='bold')
+            ax2.set_xlabel('Mail Volume')
+            ax2.set_ylabel('Call Volume')
+            
+            # 3. Sample weekly pattern (bottom left)
+            ax3 = axes[1, 0]
+            
+            # Create weekly pattern
+            sample_df = pd.DataFrame({'date': dates, 'call_count': call_data})
+            sample_df['day_of_week'] = sample_df['date'].dt.dayofweek
+            weekly_pattern = sample_df.groupby('day_of_week')['call_count'].mean()
+            
             day_names = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+            bars = ax3.bar(day_names, weekly_pattern.values, 
+                          color=COLORS['secondary'], alpha=0.8, edgecolor='white')
             
-            fig.add_trace(
-                go.Bar(
-                    x=day_names,
-                    y=weekly_pattern,
-                    name='Weekly Pattern',
-                    marker_color=COLORS['info']
-                ),
-                row=2, col=1
-            )
+            ax3.set_title('📅 Sample Weekly Pattern', fontweight='bold')
+            ax3.set_ylabel('Average Call Count')
+            ax3.tick_params(axis='x', rotation=45)
             
-            # Sample metrics table
-            fig.add_trace(
-                go.Table(
-                    header=dict(values=['Metric', 'Value'], fill_color=COLORS['primary']),
-                    cells=dict(values=[
-                        ['Total Days', 'Avg Mail', 'Avg Calls', 'Correlation'],
-                        ['90', '250', '75', '0.65']
-                    ])
-                ),
-                row=2, col=2
-            )
+            # Add value labels
+            for bar, value in zip(bars, weekly_pattern.values):
+                ax3.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 1,
+                        f'{value:.0f}', ha='center', va='bottom', fontsize=10)
             
-            fig.update_layout(
-                height=800,
-                title="📊 Sample Analytics Dashboard (No Data Available)",
-                template='plotly_white'
-            )
+            # 4. Sample statistics table (bottom right)
+            ax4 = axes[1, 1]
+            ax4.axis('off')
             
-            saved_path = self._save_plot_with_fallbacks(fig, 'sample_dashboard', 'Sample Dashboard')
-            return saved_path is not None
+            # Calculate sample statistics
+            stats = {
+                'Total Days': len(dates),
+                'Avg Daily Mail': f'{mail_data.mean():.0f}',
+                'Avg Daily Calls': f'{call_data.mean():.0f}',
+                'Mail Std Dev': f'{mail_data.std():.0f}',
+                'Call Std Dev': f'{call_data.std():.0f}',
+                'Correlation': f'{corr:.3f}'
+            }
+            
+            # Create table
+            table_data = []
+            for key, value in stats.items():
+                table_data.append([key, value])
+            
+            table = ax4.table(cellText=table_data,
+                             colLabels=['Metric', 'Value'],
+                             cellLoc='left',
+                             loc='center',
+                             colWidths=[0.6, 0.4])
+            
+            table.auto_set_font_size(False)
+            table.set_fontsize(11)
+            table.scale(1, 2)
+            
+            # Style the table
+            for i in range(len(stats) + 1):
+                for j in range(2):
+                    cell = table[(i, j)]
+                    if i == 0:  # Header
+                        cell.set_facecolor(COLORS['primary'])
+                        cell.set_text_props(weight='bold', color='white')
+                    else:
+                        cell.set_facecolor(COLORS['light'] if i % 2 == 0 else 'white')
+                    cell.set_edgecolor('white')
+            
+            ax4.set_title('📊 Sample Statistics', fontweight='bold', pad=20)
+            
+            plt.tight_layout()
+            return self._save_plot(fig, 'sample_dashboard', 'Sample Dashboard')
             
         except Exception as e:
-            logger.error(f"Sample visualization error: {e}")
+            print(f"❌ Sample plots error: {e}")
             return False
     
-    def _create_summary_page(self):
+    def _calculate_metrics(self):
+        """Calculate key metrics for display."""
+        metrics = {}
+        
+        try:
+            if self.combined_data is not None:
+                metrics['Total Days'] = len(self.combined_data)
+                
+                if 'mail_volume_total' in self.combined_data.columns:
+                    metrics['Total Mail'] = f"{self.combined_data['mail_volume_total'].sum():,.0f}"
+                    metrics['Avg Daily Mail'] = f"{self.combined_data['mail_volume_total'].mean():.0f}"
+                
+                if 'call_count' in self.combined_data.columns:
+                    metrics['Total Calls'] = f"{self.combined_data['call_count'].sum():,.0f}"
+                    metrics['Avg Daily Calls'] = f"{self.combined_data['call_count'].mean():.0f}"
+                
+                if 'data_quality' in self.combined_data.columns:
+                    completeness = (self.combined_data['data_quality'] == 'actual').mean() * 100
+                    metrics['Data Quality'] = f"{completeness:.1f}%"
+            
+            if self.evaluation_results:
+                best_model = self.evaluation_results[0]
+                metrics['Best Model'] = best_model['name']
+                metrics['Model MAE'] = f"{best_model['mae']:.1f}"
+            
+            return metrics
+            
+        except Exception as e:
+            print(f"Error calculating metrics: {e}")
+            return {'Error': 'Could not calculate metrics'}
+    
+    def _create_html_summary(self):
         """Create HTML summary page with links to all plots."""
         try:
-            # Calculate summary stats
-            stats = self._calculate_summary_metrics()
-            
             # Get list of created plot files
-            plot_files = []
-            for file in self.output_dir.glob("*.html"):
-                if file.name != 'summary.html':
-                    plot_files.append(file.name)
+            png_files = list(self.output_dir.glob("*.png"))
+            pdf_files = list(self.output_dir.glob("*.pdf"))
             
-            # Create HTML content
+            # Calculate summary stats
+            stats = self._calculate_metrics()
+            
             html_content = f"""
             <!DOCTYPE html>
             <html lang="en">
             <head>
                 <meta charset="UTF-8">
                 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <title>📊 Analytics Dashboard Summary</title>
+                <title>📊 Advanced Analytics Dashboard</title>
                 <style>
                     * {{ margin: 0; padding: 0; box-sizing: border-box; }}
                     body {{
                         font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-                        background: linear-gradient(135deg, {COLORS['primary']} 0%, {COLORS['secondary']} 100%);
+                        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
                         min-height: 100vh;
                         padding: 20px;
+                        color: #333;
                     }}
                     .container {{
-                        max-width: 1200px;
+                        max-width: 1400px;
                         margin: 0 auto;
                         background: white;
-                        border-radius: 15px;
-                        box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+                        border-radius: 20px;
+                        box-shadow: 0 20px 60px rgba(0,0,0,0.1);
                         overflow: hidden;
                     }}
                     .header {{
-                        background: linear-gradient(45deg, {COLORS['primary']}, {COLORS['secondary']});
+                        background: linear-gradient(45deg, #2E86C1, #F39C12);
                         color: white;
                         padding: 40px;
                         text-align: center;
                     }}
-                    .header h1 {{ font-size: 2.5em; margin-bottom: 10px; }}
+                    .header h1 {{ font-size: 2.8em; margin-bottom: 10px; font-weight: 300; }}
+                    .header p {{ font-size: 1.2em; opacity: 0.9; }}
                     .content {{ padding: 40px; }}
-                    .plots-grid {{
+                    
+                    .stats-grid {{
                         display: grid;
-                        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+                        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
                         gap: 20px;
                         margin: 30px 0;
                     }}
-                    .plot-card {{
-                        background: {COLORS['light']};
-                        border-radius: 10px
-                        padding: 20px;
+                    .stat-card {{
+                        background: linear-gradient(135deg, #f8f9fa, #e9ecef);
+                        padding: 25px;
+                        border-radius: 15px;
                         text-align: center;
-                        transition: all 0.3s;
-                        border: 2px solid transparent;
+                        border-left: 5px solid #2E86C1;
+                        transition: transform 0.3s ease;
+                    }}
+                    .stat-card:hover {{ transform: translateY(-8px); box-shadow: 0 15px 30px rgba(0,0,0,0.1); }}
+                    .stat-value {{ font-size: 2.5em; font-weight: bold; color: #2E86C1; margin: 10px 0; }}
+                    .stat-label {{ color: #666; font-size: 14px; text-transform: uppercase; letter-spacing: 1px; }}
+                    
+                    .plots-grid {{
+                        display: grid;
+                        grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+                        gap: 25px;
+                        margin: 40px 0;
+                    }}
+                    .plot-card {{
+                        background: white;
+                        border-radius: 15px;
+                        padding: 25px;
+                        text-align: center;
+                        box-shadow: 0 8px 25px rgba(0,0,0,0.08);
+                        transition: all 0.3s ease;
+                        border: 1px solid #e9ecef;
                     }}
                     .plot-card:hover {{
-                        transform: translateY(-5px);
-                        box-shadow: 0 10px 30px rgba(0,0,0,0.15);
-                        border-color: {COLORS['primary']};
+                        transform: translateY(-10px);
+                        box-shadow: 0 20px 40px rgba(0,0,0,0.15);
+                        border-color: #2E86C1;
                     }}
-                    .plot-icon {{ font-size: 3em; margin-bottom: 15px; }}
-                    .plot-title {{ font-size: 1.3em; font-weight: 600; margin-bottom: 10px; color: {COLORS['primary']}; }}
+                    .plot-icon {{ font-size: 3.5em; margin-bottom: 15px; }}
+                    .plot-title {{ font-size: 1.4em; font-weight: 600; margin-bottom: 10px; color: #2E86C1; }}
+                    .plot-description {{ color: #666; margin-bottom: 20px; line-height: 1.5; }}
+                    
+                    .plot-links {{
+                        display: flex;
+                        gap: 10px;
+                        justify-content: center;
+                        flex-wrap: wrap;
+                    }}
                     .plot-link {{
                         display: inline-block;
-                        background: {COLORS['primary']};
-                        color: white;
-                        padding: 12px 24px;
+                        padding: 10px 20px;
                         text-decoration: none;
                         border-radius: 25px;
-                        transition: all 0.3s;
                         font-weight: 500;
+                        transition: all 0.3s ease;
+                        font-size: 14px;
                     }}
-                    .plot-link:hover {{
-                        background: {COLORS['secondary']};
+                    .png-link {{
+                        background: #2E86C1;
+                        color: white;
+                    }}
+                    .png-link:hover {{
+                        background: #1B4F72;
                         transform: translateY(-2px);
                     }}
-                    .stats-grid {{
-                        display: grid;
-                        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-                        gap: 15px;
-                        margin: 20px 0;
+                    .pdf-link {{
+                        background: #E74C3C;
+                        color: white;
                     }}
-                    .stat-card {{
-                        background: {COLORS['light']};
-                        padding: 20px;
-                        border-radius: 10px;
+                    .pdf-link:hover {{
+                        background: #C0392B;
+                        transform: translateY(-2px);
+                    }}
+                    
+                    .section {{
+                        margin: 40px 0;
+                        padding: 30px;
+                        background: #f8f9fa;
+                        border-radius: 15px;
+                    }}
+                    .section h2 {{
+                        color: #2E86C1;
+                        font-size: 1.8em;
+                        margin-bottom: 20px;
+                        border-bottom: 3px solid #2E86C1;
+                        padding-bottom: 10px;
+                    }}
+                    
+                    .footer {{
+                        background: #2C3E50;
+                        color: white;
                         text-align: center;
-                        border-left: 4px solid {COLORS['primary']};
+                        padding: 30px;
                     }}
-                    .stat-value {{ font-size: 2em; font-weight: bold; color: {COLORS['primary']}; }}
-                    .footer {{ background: {COLORS['dark']}; color: white; text-align: center; padding: 20px; }}
+                    
+                    .badge {{
+                        display: inline-block;
+                        background: #27AE60;
+                        color: white;
+                        padding: 5px 15px;
+                        border-radius: 20px;
+                        font-size: 12px;
+                        font-weight: bold;
+                        margin: 5px;
+                    }}
                 </style>
             </head>
             <body>
                 <div class="container">
                     <div class="header">
-                        <h1>📊 Analytics Dashboard</h1>
-                        <p>Interactive Visualizations Summary</p>
+                        <h1>📊 Advanced Analytics Dashboard</h1>
+                        <p>Professional Mail-Call Analytics • Matplotlib + Seaborn</p>
                         <p>Generated: {datetime.now().strftime('%B %d, %Y at %I:%M %p')}</p>
                     </div>
                     
                     <div class="content">
-                        <h2>📈 Key Statistics</h2>
-                        <div class="stats-grid">
-                            {self._generate_stats_html(stats)}
+                        <div class="section">
+                            <h2>📈 Key Performance Metrics</h2>
+                            <div class="stats-grid">
+                                {self._generate_stats_html(stats)}
+                            </div>
                         </div>
                         
-                        <h2>🎯 Interactive Visualizations</h2>
-                        <div class="plots-grid">
-                            {self._generate_plot_cards_html(plot_files)}
+                        <div class="section">
+                            <h2>🎯 Professional Visualizations</h2>
+                            <p>High-quality publication-ready plots in PNG and PDF formats:</p>
+                            <div class="plots-grid">
+                                {self._generate_plot_cards_html(png_files, pdf_files)}
+                            </div>
                         </div>
                         
-                        <h2>ℹ️ Usage Instructions</h2>
-                        <ul>
-                            <li><strong>Interactive:</strong> All plots are fully interactive - hover, zoom, and explore</li>
-                            <li><strong>Export:</strong> Use plot toolbars to download PNG/PDF versions</li>
-                            <li><strong>Mobile:</strong> All visualizations are mobile-responsive</li>
-                            <li><strong>Filtering:</strong> Click legend items to show/hide data series</li>
-                        </ul>
+                        <div class="section">
+                            <h2>✨ Features & Benefits</h2>
+                            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px;">
+                                <div>
+                                    <h3>🖼️ High-Quality Output</h3>
+                                    <ul>
+                                        <li>Publication-ready PNG images (300 DPI)</li>
+                                        <li>Vector PDF files for scalability</li>
+                                        <li>Professional color schemes</li>
+                                        <li>Clean, modern styling</li>
+                                    </ul>
+                                </div>
+                                <div>
+                                    <h3>📊 Advanced Analytics</h3>
+                                    <ul>
+                                        <li>Statistical analysis and distributions</li>
+                                        <li>Correlation and trend analysis</li>
+                                        <li>Data quality assessment</li>
+                                        <li>Forecasting visualizations</li>
+                                    </ul>
+                                </div>
+                                <div>
+                                    <h3>🔧 Technical Excellence</h3>
+                                    <ul>
+                                        <li>No browser dependencies</li>
+                                        <li>Cross-platform compatibility</li>
+                                        <li>Robust error handling</li>
+                                        <li>Memory-efficient processing</li>
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="section">
+                            <h2>ℹ️ Usage Guide</h2>
+                            <ul>
+                                <li><strong>PNG Files:</strong> Perfect for presentations, reports, and web use</li>
+                                <li><strong>PDF Files:</strong> Ideal for print materials and publications</li>
+                                <li><strong>High Resolution:</strong> All images are 300 DPI for crisp quality</li>
+                                <li><strong>Color Schemes:</strong> Carefully chosen for accessibility and professionalism</li>
+                            </ul>
+                        </div>
+                        
+                        <div class="section">
+                            <h2>🎯 Analysis Summary</h2>
+                            <div style="display: flex; flex-wrap: wrap; gap: 10px; margin-top: 15px;">
+                                <span class="badge">✅ {len(self.created_plots)} Plots Created</span>
+                                <span class="badge">📄 {len(pdf_files)} PDF Files</span>
+                                <span class="badge">🖼️ {len(png_files)} PNG Files</span>
+                                <span class="badge">🎨 Matplotlib + Seaborn</span>
+                            </div>
+                        </div>
                     </div>
                     
                     <div class="footer">
-                        <p>🚀 Enhanced Analytics System | Created with Plotly & Python</p>
+                        <p>🚀 Advanced Analytics System | Built with Matplotlib & Seaborn</p>
+                        <p>Professional • Reliable • Publication-Ready</p>
                     </div>
                 </div>
             </body>
             </html>
             """
             
-            # Save summary page
-            summary_path = self.output_dir / 'summary.html'
+            # Save HTML summary
+            summary_path = self.output_dir / 'analytics_summary.html'
             with open(summary_path, 'w', encoding='utf-8') as f:
                 f.write(html_content)
             
-            logger.info(f"📄 Summary page created: {summary_path.name}")
+            print(f"📄 HTML summary created: {summary_path.name}")
             return summary_path
             
         except Exception as e:
-            logger.error(f"Summary page creation failed: {e}")
+            print(f"❌ HTML summary creation failed: {e}")
             return None
     
     def _generate_stats_html(self, stats):
@@ -1751,85 +1627,118 @@ class RobustAnalyticsPlotter:
             stats_html += f"""
             <div class="stat-card">
                 <div class="stat-value">{value}</div>
-                <div>{key}</div>
+                <div class="stat-label">{key}</div>
             </div>
             """
         return stats_html
     
-    def _generate_plot_cards_html(self, plot_files):
+    def _generate_plot_cards_html(self, png_files, pdf_files):
         """Generate HTML for plot cards."""
         plot_configs = {
-            'executive_dashboard.html': ('📊', 'Executive Dashboard', 'High-level overview and key metrics'),
-            'time_series_analysis.html': ('📈', 'Time Series Analysis', 'Temporal trends and patterns'),
-            'source_analysis.html': ('🎯', 'Source Analysis', 'Performance by mail source'),
-            'model_performance.html': ('🤖', 'Model Performance', 'Prediction model comparison'),
-            'correlation_analysis.html': ('🔗', 'Correlation Analysis', 'Relationship analysis'),
-            'data_quality.html': ('🔍', 'Data Quality', 'Data completeness assessment'),
-            'forecast_visualization.html': ('🔮', 'Forecast', 'Future predictions'),
-            'sample_dashboard.html': ('📊', 'Sample Dashboard', 'Example visualization')
+            'executive_dashboard': ('📊', 'Executive Dashboard', 'Comprehensive overview with key metrics and trends'),
+            'time_series_analysis': ('📈', 'Time Series Analysis', 'Temporal patterns, moving averages, and seasonality'),
+            'source_analysis': ('🎯', 'Source Analysis', 'Performance breakdown by mail source with correlations'),
+            'model_performance': ('🤖', 'Model Performance', 'Detailed comparison of prediction model accuracy'),
+            'correlation_analysis': ('🔗', 'Correlation Analysis', 'Statistical relationships and lag analysis'),
+            'data_quality': ('🔍', 'Data Quality', 'Completeness assessment and quality metrics'),
+            'forecast_visualization': ('🔮', 'Forecast Analysis', 'Future predictions with confidence intervals'),
+            'statistical_analysis': ('📊', 'Statistical Analysis', 'Advanced statistical insights and distributions'),
+            'sample_dashboard': ('📊', 'Sample Dashboard', 'Demonstration with synthetic data')
         }
         
+        # Get base names of files
+        png_bases = {f.stem for f in png_files}
+        pdf_bases = {f.stem for f in pdf_files}
+        all_bases = png_bases.union(pdf_bases)
+        
         cards_html = ""
-        for filename in plot_files:
-            if filename in plot_configs:
-                icon, title, description = plot_configs[filename]
-                cards_html += f"""
-                <div class="plot-card">
-                    <div class="plot-icon">{icon}</div>
-                    <div class="plot-title">{title}</div>
-                    <p>{description}</p>
-                    <a href="{filename}" class="plot-link" target="_blank">Open Plot</a>
-                </div>
-                """
+        for base_name in all_bases:
+            if base_name in plot_configs:
+                icon, title, description = plot_configs[base_name]
             else:
-                # Generic card for unknown files
-                name = filename.replace('.html', '').replace('_', ' ').title()
-                cards_html += f"""
-                <div class="plot-card">
-                    <div class="plot-icon">📊</div>
-                    <div class="plot-title">{name}</div>
-                    <p>Interactive visualization</p>
-                    <a href="{filename}" class="plot-link" target="_blank">Open Plot</a>
+                icon, title, description = ('📊', base_name.replace('_', ' ').title(), 'Professional visualization')
+            
+            # Build links
+            links_html = ""
+            if base_name in png_bases:
+                links_html += f'<a href="{base_name}.png" class="plot-link png-link" target="_blank">📸 View PNG</a>'
+            if base_name in pdf_bases:
+                links_html += f'<a href="{base_name}.pdf" class="plot-link pdf-link" target="_blank">📄 View PDF</a>'
+            
+            cards_html += f"""
+            <div class="plot-card">
+                <div class="plot-icon">{icon}</div>
+                <div class="plot-title">{title}</div>
+                <div class="plot-description">{description}</div>
+                <div class="plot-links">
+                    {links_html}
                 </div>
-                """
+            </div>
+            """
         
         return cards_html
     
     def _open_results(self):
-        """Open the results with comprehensive fallback methods."""
-        print("\n🌐 Opening visualization results...")
-        
-        # Try to find the best file to open
-        priority_files = [
-            'summary.html',
-            'executive_dashboard.html', 
-            'sample_dashboard.html'
-        ]
-        
-        target_file = None
-        for filename in priority_files:
-            file_path = self.output_dir / filename
-            if file_path.exists():
-                target_file = file_path
-                break
-        
-        if not target_file:
-            # Find any HTML file
-            html_files = list(self.output_dir.glob("*.html"))
-            if html_files:
-                target_file = html_files[0]
-        
-        if target_file:
-            print(f"🎯 Opening: {target_file.name}")
-            BrowserOpener.open_file(target_file)
-        else:
-            print("❌ No HTML files found to open")
+        """Try to open the results."""
+        try:
+            # Find HTML summary file
+            summary_path = self.output_dir / 'analytics_summary.html'
+            
+            if summary_path.exists():
+                print(f"🌐 Opening summary: {summary_path.name}")
+                self._try_open_file(summary_path)
+            else:
+                print("📁 Summary file not found, opening output directory")
+                self._try_open_directory()
+                
+        except Exception as e:
+            print(f"⚠️ Could not auto-open results: {e}")
+            print(f"📁 Manually open: {self.output_dir}")
     
-    def _print_results_summary(self):
+    def _try_open_file(self, file_path):
+        """Try to open a file with system default application."""
+        try:
+            abs_path = Path(file_path).resolve()
+            
+            if sys.platform.startswith('win'):
+                os.startfile(str(abs_path))
+                print("✅ Opened with Windows default application")
+            elif sys.platform.startswith('darwin'):
+                subprocess.run(['open', str(abs_path)])
+                print("✅ Opened with macOS default application")
+            elif sys.platform.startswith('linux'):
+                subprocess.run(['xdg-open', str(abs_path)])
+                print("✅ Opened with Linux default application")
+            else:
+                print(f"📋 Please manually open: {abs_path}")
+                
+        except Exception as e:
+            print(f"⚠️ Could not open file: {e}")
+            print(f"📋 Please manually open: {file_path}")
+    
+    def _try_open_directory(self):
+        """Try to open the output directory."""
+        try:
+            abs_path = self.output_dir.resolve()
+            
+            if sys.platform.startswith('win'):
+                subprocess.run(['explorer', str(abs_path)])
+            elif sys.platform.startswith('darwin'):
+                subprocess.run(['open', str(abs_path)])
+            elif sys.platform.startswith('linux'):
+                subprocess.run(['xdg-open', str(abs_path)])
+                
+            print(f"✅ Opened directory: {abs_path}")
+            
+        except Exception as e:
+            print(f"⚠️ Could not open directory: {e}")
+            print(f"📁 Please manually navigate to: {self.output_dir}")
+    
+    def _print_results(self):
         """Print comprehensive results summary."""
-        print("\n" + "="*80)
-        print("🎉 VISUALIZATION RESULTS SUMMARY")
-        print("="*80)
+        print("\n" + "=" * 80)
+        print("🎉 ADVANCED ANALYTICS RESULTS")
+        print("=" * 80)
         
         if self.created_plots:
             print(f"✅ Successfully created {len(self.created_plots)} visualizations:")
@@ -1843,138 +1752,57 @@ class RobustAnalyticsPlotter:
         
         print(f"\n📁 Results location: {self.output_dir}")
         
-        # List all created files
-        html_files = list(self.output_dir.glob("*.html"))
+        # Count files
         png_files = list(self.output_dir.glob("*.png"))
+        pdf_files = list(self.output_dir.glob("*.pdf"))
+        html_files = list(self.output_dir.glob("*.html"))
+        
+        print(f"\n📊 Generated Files:")
+        print(f"   🖼️ PNG files: {len(png_files)}")
+        print(f"   📄 PDF files: {len(pdf_files)}")
+        print(f"   🌐 HTML files: {len(html_files)}")
+        
+        print(f"\n🎯 Key Features:")
+        print(f"   📐 High resolution: 300 DPI")
+        print(f"   🎨 Professional styling")
+        print(f"   📱 No browser dependencies")
+        print(f"   🔧 Cross-platform compatible")
         
         if html_files:
-            print(f"\n🌐 HTML Files ({len(html_files)}):")
-            for file in html_files:
-                print(f"   📄 {file.name}")
-        
-        if png_files:
-            print(f"\n🖼️ PNG Files ({len(png_files)}):")
-            for file in png_files:
-                print(f"   🎨 {file.name}")
-        
-        # Print manual access instructions
-        print(f"\n💡 Manual Access:")
-        print(f"   1. Navigate to: {self.output_dir}")
-        print(f"   2. Double-click any .html file")
-        print(f"   3. Or copy file path to browser address bar")
-        
-        if html_files:
-            main_file = self.output_dir / 'summary.html'
+            main_file = self.output_dir / 'analytics_summary.html'
             if main_file.exists():
                 print(f"\n🚀 Start here: {main_file}")
             else:
-                print(f"\n🚀 Start here: {html_files[0]}")
+                print(f"\n🚀 View files in: {self.output_dir}")
         
-        print("="*80)
+        print("=" * 80)
 
 # ============================================================================
-# STANDALONE EXECUTION AND TESTING
+# MAIN EXECUTION
 # ============================================================================
-
-def test_environment():
-    """Test the environment thoroughly."""
-    print("🧪 Testing environment...")
-    
-    issues = []
-    
-    # Test Plotly
-    if not PLOTLY_AVAILABLE:
-        issues.append("Plotly not available")
-    else:
-        try:
-            fig = go.Figure(data=go.Bar(x=['Test'], y=[1]))
-            print("✅ Plotly basic functionality works")
-        except Exception as e:
-            issues.append(f"Plotly error: {e}")
-    
-    # Test PNG export
-    if not PNG_EXPORT_AVAILABLE:
-        issues.append("PNG export not available (install kaleido)")
-    
-    # Test data directory
-    if not DEFAULT_DATA_DIR.exists():
-        issues.append(f"Data directory not found: {DEFAULT_DATA_DIR}")
-    
-    # Test file system permissions
-    try:
-        DEFAULT_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-        test_file = DEFAULT_OUTPUT_DIR / 'test_write.txt'
-        test_file.write_text('test')
-        test_file.unlink()
-        print("✅ File system permissions OK")
-    except Exception as e:
-        issues.append(f"File system error: {e}")
-    
-    if issues:
-        print("\n⚠️ Environment issues:")
-        for issue in issues:
-            print(f"   - {issue}")
-        return False
-    else:
-        print("✅ Environment test passed!")
-        return True
-
-def create_test_visualization():
-    """Create a simple test visualization."""
-    print("🎨 Creating test visualization...")
-    
-    try:
-        # Create test plotter
-        plotter = RobustAnalyticsPlotter()
-        
-        # Create sample dashboard
-        if plotter._create_sample_visualizations():
-            print("✅ Test visualization created successfully!")
-            
-            # Try to open it
-            test_file = plotter.output_dir / 'sample_dashboard.html'
-            if test_file.exists():
-                BrowserOpener.open_file(test_file)
-            
-            return True
-        else:
-            print("❌ Test visualization failed")
-            return False
-            
-    except Exception as e:
-        print(f"❌ Test visualization error: {e}")
-        return False
 
 def main():
-    """Main execution function with comprehensive error handling."""
-    print("🚀 ROBUST ANALYTICS PLOTTING SYSTEM")
-    print("="*60)
+    """Main execution function."""
+    print("🎨 ADVANCED MATPLOTLIB ANALYTICS SYSTEM")
+    print("=" * 60)
+    
+    if not PLOTTING_AVAILABLE:
+        print("❌ Required plotting libraries not available!")
+        print("💡 Install with: pip install matplotlib seaborn pandas numpy")
+        return False
     
     try:
-        # Test environment first
-        if not test_environment():
-            print("\n💡 Fix the issues above and try again")
-            print("💡 Common fixes:")
-            print("   pip install plotly pandas numpy kaleido")
-            return False
+        # Create plotter
+        plotter = AdvancedMatplotlibPlotter()
         
-        # Check for analysis results
-        if not DEFAULT_DATA_DIR.exists():
-            print(f"\n⚠️ Analysis results not found: {DEFAULT_DATA_DIR}")
-            print("🎯 Creating sample visualization instead...")
-            return create_test_visualization()
-        
-        # Create full plotter
-        print(f"\n📊 Initializing robust plotter...")
-        plotter = RobustAnalyticsPlotter()
-        
-        # Create all visualizations
+        # Run analysis
         success = plotter.create_all_visualizations()
         
         if success:
-            print("\n🎉 SUCCESS! Visualizations created successfully!")
+            print("\n🎉 SUCCESS! Professional visualizations created!")
+            print("🎯 High-quality PNG and PDF files ready for use")
         else:
-            print("\n⚠️ Some visualizations failed, but results may still be available")
+            print("\n⚠️ Some visualizations failed, check output directory")
         
         return success
         
@@ -1983,67 +1811,7 @@ def main():
         return False
     except Exception as e:
         print(f"\n💥 Unexpected error: {e}")
-        print(f"📋 Full error: {traceback.format_exc()}")
-        
-        # Try emergency sample creation
-        print("\n🆘 Attempting emergency sample creation...")
-        try:
-            return create_test_visualization()
-        except:
-            print("❌ Emergency creation also failed")
-            return False
-
-def quick_start():
-    """Quick start function for immediate results."""
-    print("⚡ QUICK START MODE")
-    print("-" * 30)
-    
-    try:
-        # Just create a simple test plot
-        if PLOTLY_AVAILABLE:
-            fig = go.Figure()
-            
-            # Add sample data
-            dates = pd.date_range('2024-01-01', periods=30, freq='D')
-            values = np.random.randint(50, 200, 30)
-            
-            fig.add_trace(go.Scatter(
-                x=dates,
-                y=values,
-                mode='lines+markers',
-                name='Sample Data',
-                line=dict(color='#1f77b4', width=3)
-            ))
-            
-            fig.update_layout(
-                title="🚀 Quick Start Test Plot",
-                xaxis_title="Date",
-                yaxis_title="Value",
-                template='plotly_white'
-            )
-            
-            # Save and open
-            output_dir = Path("quick_start_plots")
-            output_dir.mkdir(exist_ok=True)
-            
-            file_path = output_dir / "quick_test.html"
-            fig.write_html(file_path, include_plotlyjs=True)
-            
-            print(f"✅ Quick test plot created: {file_path}")
-            BrowserOpener.open_file(file_path)
-            
-            return True
-        else:
-            print("❌ Plotly not available for quick start")
-            return False
-            
-    except Exception as e:
-        print(f"❌ Quick start failed: {e}")
         return False
-
-# ============================================================================
-# COMMAND LINE INTERFACE
-# ============================================================================
 
 if __name__ == "__main__":
     import sys
@@ -2054,42 +1822,28 @@ if __name__ == "__main__":
         
         if arg in ['-h', '--help', 'help']:
             print("""
-🎨 Robust Analytics Plotting System
+🎨 Advanced Matplotlib Analytics System
 
 Usage:
-    python robust_plotting.py              # Full analysis
-    python robust_plotting.py test         # Test environment
-    python robust_plotting.py quick        # Quick start test
-    python robust_plotting.py sample       # Create sample plots
+    python advanced_matplotlib_plotter.py
 
 Features:
-- Multiple browser opening fallbacks
-- PNG backup generation
+- Publication-quality PNG images (300 DPI)
+- Vector PDF files for print
+- Professional color schemes
+- No browser dependencies
 - Cross-platform compatibility
-- Comprehensive error handling
-- Sample data when analysis results missing
 
 Requirements:
-    pip install plotly pandas numpy kaleido
+    pip install matplotlib seaborn pandas numpy
+
+Output:
+- High-resolution PNG files
+- Vector PDF files
+- Professional HTML summary
             """)
             sys.exit(0)
-            
-        elif arg in ['test', 'check']:
-            test_environment()
-            sys.exit(0)
-            
-        elif arg in ['quick', 'fast']:
-            quick_start()
-            sys.exit(0)
-            
-        elif arg in ['sample', 'demo']:
-            create_test_visualization()
-            sys.exit(0)
     
-    # Default: run full analysis
-    try:
-        success = main()
-        sys.exit(0 if success else 1)
-    except Exception as e:
-        print(f"💥 Fatal error: {e}")
-        sys.exit(1)
+    # Run main analysis
+    success = main()
+    sys.exit(0 if success else 1)
